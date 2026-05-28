@@ -34,7 +34,9 @@ Manna--Waldinger developments as runnable SNARK examples: synthesis of the
 unification algorithm, emergence of the binary-search paradigm in the
 square-root approximation problem, subtractive greatest-common-divisor
 computation, and quotient/remainder computation by recursive subtraction.  The
-development is not a verbatim
+development also adds four non-historical stress tests: stable merge, stable
+partition, addition simplification, and shortest-path relaxation.  It is not a
+verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
 extract program terms from proofs.  It also includes executable Lisp
@@ -55,8 +57,8 @@ proof of that theorem carries enough information to compute the output.  In
 SNARK, this information is represented by answers attached to rows.  When a
 proof closes, \texttt{(answer t)} can be read as the extracted witness term.
 
-The local development adds a new synthesis example file.  It contributes seven
-entry points:
+The local development adds a Manna--Waldinger synthesis example file.  It
+contributes seven entry points:
 \begin{lstlisting}
 (mw-unification-variable-case)
 (mw-unification-constant-case)
@@ -82,6 +84,21 @@ The same file also contains runnable interpretations:
 These are ordinary Common Lisp functions.  They are included to show where the
 SNARK answer term stops and concrete execution begins.
 
+A second file, \texttt{new-synthesis-examples.lisp}, adds examples that are not
+claimed as historical Manna--Waldinger reconstructions but that exercise the
+same answer-extraction interface:
+\begin{lstlisting}
+(new-stable-merge-program)
+(new-stable-partition-program)
+(new-plus-simplifier-program)
+(new-shortest-path-relaxation-program)
+(new-synthesis-examples)
+\end{lstlisting}
+It also includes executable interpretations:
+\begin{lstlisting}
+(new-executable-synthesis-demos)
+\end{lstlisting}
+
 \section{Answer Extraction in the Development}
 
 Each example follows the same pattern.  First, it initializes SNARK with
@@ -101,6 +118,468 @@ goal is then proved with an answer template:
 If two proof branches contribute different answers, SNARK combines them with
 \texttt{ANSWER-IF}.  This is the key mechanism used here to expose conditional
 branches in the synthesized program.
+
+\section{Specification-to-Answer Catalogue}
+
+This section records the complete middle layer for the examples: the informal
+mathematical/logical specification, the actual SNARK input formulas, and the
+answer extracted by SNARK.  Declarations of constructors and predicates are in
+the source files; the listings here show the formulas sent to the prover and
+the witness query.
+
+\subsection{MW Unification: Variable Case}
+
+Mathematically, the variable case is the occurs-check split:
+\[
+  \mathrm{occurs}(\mathrm{var}(v),t) \Rightarrow r=\mathrm{none},
+  \qquad
+  \neg\mathrm{occurs}(\mathrm{var}(v),t)
+    \Rightarrow r=\mathrm{some}(\mathrm{bind}(v,t)).
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(implies (mw-occurs (mw-var v) term)
+                  (mw-unify-out (mw-var v) term mw-none))
+        :name 'mw-occurs-check-failure)
+(assert '(implies (not (mw-occurs (mw-var v) term))
+                  (mw-unify-out (mw-var v) term
+                                (mw-some (mw-bind v term))))
+        :name 'mw-variable-binding)
+(prove '(mw-unify-out (mw-var v) term ?result)
+       :answer '(values ?result))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-OCCURS (MW-VAR V) TERM)
+  (VALUES MW-NONE)
+  (VALUES (MW-SOME (MW-BIND V TERM))))
+\end{lstlisting}
+
+\subsection{MW Unification: Constant Case}
+
+For constants, unification succeeds with the identity substitution exactly when
+the symbols match:
+\[
+  \mathrm{same}(c,d) \Rightarrow r=\mathrm{some}(\mathrm{id}),
+  \qquad
+  \neg\mathrm{same}(c,d) \Rightarrow r=\mathrm{none}.
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(implies (mw-same-symbol c d)
+                  (mw-unify-out (mw-const c) (mw-const d)
+                                (mw-some mw-id)))
+        :name 'mw-identical-constants)
+(assert '(implies (not (mw-same-symbol c d))
+                  (mw-unify-out (mw-const c) (mw-const d) mw-none))
+        :name 'mw-distinct-constants)
+(prove '(mw-unify-out (mw-const c) (mw-const d) ?result)
+       :answer '(values ?result))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-SAME-SYMBOL C D)
+  (VALUES (MW-SOME MW-ID))
+  (VALUES MW-NONE))
+\end{lstlisting}
+
+\subsection{MW Unification: Compound Case}
+
+For compound terms, first unify the heads.  If that fails, fail.  Otherwise
+substitute the first unifier through the tails, unify the tails, and compose
+the two substitutions if the second unification succeeds.
+SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (mw-fail (mw-unify m m1))
+          (mw-unify-out (mw-app m n) (mw-app m1 n1) mw-none))
+        :name 'mw-compound-first-fails)
+(assert '(implies
+          (and (not (mw-fail (mw-unify m m1)))
+               (mw-fail
+                (mw-unify
+                 (mw-subst (mw-subst-of (mw-unify m m1)) n)
+                 (mw-subst (mw-subst-of (mw-unify m m1)) n1))))
+          (mw-unify-out (mw-app m n) (mw-app m1 n1) mw-none))
+        :name 'mw-compound-second-fails)
+(assert '(implies
+          (and (not (mw-fail (mw-unify m m1)))
+               (not
+                (mw-fail
+                 (mw-unify
+                  (mw-subst (mw-subst-of (mw-unify m m1)) n)
+                  (mw-subst (mw-subst-of (mw-unify m m1)) n1)))))
+          (mw-unify-out
+           (mw-app m n)
+           (mw-app m1 n1)
+           (mw-some
+            (mw-compose
+             (mw-subst-of (mw-unify m m1))
+             (mw-subst-of
+              (mw-unify
+               (mw-subst (mw-subst-of (mw-unify m m1)) n)
+               (mw-subst (mw-subst-of (mw-unify m m1)) n1)))))))
+        :name 'mw-compound-compose)
+(prove '(mw-unify-out (mw-app m n) (mw-app m1 n1) ?result)
+       :answer '(values ?result))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-FAIL (MW-UNIFY M M1))
+  (VALUES MW-NONE)
+  (ANSWER-IF
+    (MW-FAIL
+      (MW-UNIFY
+        (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+        (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1)))
+    (VALUES MW-NONE)
+    (VALUES
+      (MW-SOME
+        (MW-COMPOSE
+          (MW-SUBST-OF (MW-UNIFY M M1))
+          (MW-SUBST-OF
+            (MW-UNIFY
+              (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+              (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1))))))))
+\end{lstlisting}
+
+\subsection{MW Square Root: Binary-Search Step}
+
+For a current lower endpoint \(z\), choose the right half exactly when
+\((z+\epsilon)^2\leq r\):
+\[
+  (z+\epsilon)^2\leq r \Rightarrow a=z+\epsilon,
+  \qquad
+  \neg((z+\epsilon)^2\leq r) \Rightarrow a=z.
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (mw-le (mw-square (mw-plus z eps)) r)
+          (mw-sqrt-within r (mw-plus z eps) eps))
+        :name 'mw-square-root-right-half)
+(assert '(implies
+          (not (mw-le (mw-square (mw-plus z eps)) r))
+          (mw-sqrt-within r z eps))
+        :name 'mw-square-root-left-half)
+(prove '(mw-sqrt-within r ?answer eps)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-LE (MW-SQUARE (MW-PLUS Z EPS)) R)
+  (VALUES (MW-PLUS Z EPS))
+  (VALUES Z))
+\end{lstlisting}
+
+\subsection{MW Square Root: Recursive Program}
+
+The recursive skeleton returns zero at a large tolerance; otherwise it recurses
+at doubled tolerance and applies the same right-half test:
+\[
+  \mathrm{large}(r,\epsilon) \Rightarrow a=0,
+  \quad
+  \neg\mathrm{large}(r,\epsilon) \Rightarrow
+  a \in \{s,\;s+\epsilon\}
+\]
+where \(s=\mathrm{sqrt}(r,2\epsilon)\), choosing \(s+\epsilon\) exactly when
+\((s+\epsilon)^2\leq r\).  SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (mw-large-tolerance r eps)
+          (mw-sqrt-within r zero eps))
+        :name 'mw-square-root-base-case)
+(assert '(implies
+          (and (not (mw-large-tolerance r eps))
+               (mw-le
+                (mw-square
+                 (mw-plus (mw-sqrt r (mw-double eps)) eps))
+                r))
+          (mw-sqrt-within
+           r
+           (mw-plus (mw-sqrt r (mw-double eps)) eps)
+           eps))
+        :name 'mw-square-root-recursive-right-half)
+(assert '(implies
+          (and (not (mw-large-tolerance r eps))
+               (not
+                (mw-le
+                 (mw-square
+                  (mw-plus (mw-sqrt r (mw-double eps)) eps))
+                 r)))
+          (mw-sqrt-within r (mw-sqrt r (mw-double eps)) eps))
+        :name 'mw-square-root-recursive-left-half)
+(prove '(mw-sqrt-within r ?answer eps)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-LARGE-TOLERANCE R EPS)
+  (VALUES ZERO)
+  (ANSWER-IF
+    (MW-LE
+      (MW-SQUARE
+        (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+      R)
+    (VALUES (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+    (VALUES (MW-SQRT R (MW-DOUBLE EPS)))))
+\end{lstlisting}
+
+\subsection{MW Greatest Common Divisor}
+
+For positive integers, the subtractive Euclidean split is:
+\[
+  a=b \Rightarrow g=a,\quad
+  a>b \Rightarrow g=\mathrm{gcd}(a-b,b),\quad
+  b>a \Rightarrow g=\mathrm{gcd}(a,b-a).
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(or (mw-eq a b) (mw-gt a b) (mw-gt b a))
+        :name 'mw-gcd-trichotomy)
+(assert '(implies
+          (mw-eq a b)
+          (mw-gcd-out a b a))
+        :name 'mw-gcd-equal-case)
+(assert '(implies
+          (mw-gt a b)
+          (mw-gcd-out a b (mw-gcd (mw-minus a b) b)))
+        :name 'mw-gcd-left-reduction)
+(assert '(implies
+          (mw-gt b a)
+          (mw-gcd-out a b (mw-gcd a (mw-minus b a))))
+        :name 'mw-gcd-right-reduction)
+(prove '(mw-gcd-out a b ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-GT B A)
+  (VALUES (MW-GCD A (MW-MINUS B A)))
+  (ANSWER-IF (MW-GT A B)
+    (VALUES (MW-GCD (MW-MINUS A B) B))
+    (VALUES A)))
+\end{lstlisting}
+
+\subsection{MW Quotient and Remainder}
+
+For natural \(n\) and positive \(d\), return \(q,r\) with
+\(n=qd+r\) and \(0\leq r<d\).  The recursive split is:
+\[
+  n<d \Rightarrow (q,r)=(0,n),\quad
+  n\geq d \Rightarrow
+  (q,r)=(1+q',r')
+\]
+where \((q',r')=\mathrm{qr}(n-d,d)\).  SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (mw-lt n d)
+          (mw-qr-out n d (mw-pair zero n)))
+        :name 'mw-qr-base-case)
+(assert '(implies
+          (not (mw-lt n d))
+          (mw-qr-out
+           n
+           d
+           (mw-pair
+            (mw-succ (mw-quotient-of (mw-qr (mw-minus n d) d)))
+            (mw-remainder-of (mw-qr (mw-minus n d) d)))))
+        :name 'mw-qr-recursive-case)
+(prove '(mw-qr-out n d ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (MW-LT N D)
+  (VALUES (MW-PAIR ZERO N))
+  (VALUES
+    (MW-PAIR
+      (MW-SUCC (MW-QUOTIENT-OF (MW-QR (MW-MINUS N D) D)))
+      (MW-REMAINDER-OF (MW-QR (MW-MINUS N D) D)))))
+\end{lstlisting}
+
+\subsection{New Stable Merge}
+
+For nonempty sorted lists \(x::xs\) and \(y::ys\), stability chooses the left
+head on equality:
+\[
+  x\leq y \Rightarrow m=x::\mathrm{merge}(xs,y::ys),\quad
+  \neg(x\leq y) \Rightarrow m=y::\mathrm{merge}(x::xs,ys).
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (new-le x y)
+          (new-merge-out
+           (new-cons x xs)
+           (new-cons y ys)
+           (new-cons x (new-merge xs (new-cons y ys)))))
+        :name 'new-merge-take-left)
+(assert '(implies
+          (not (new-le x y))
+          (new-merge-out
+           (new-cons x xs)
+           (new-cons y ys)
+           (new-cons y (new-merge (new-cons x xs) ys))))
+        :name 'new-merge-take-right)
+(prove '(new-merge-out (new-cons x xs) (new-cons y ys) ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-LE X Y)
+  (VALUES (NEW-CONS X (NEW-MERGE XS (NEW-CONS Y YS))))
+  (VALUES (NEW-CONS Y (NEW-MERGE (NEW-CONS X XS) YS))))
+\end{lstlisting}
+
+\subsection{New Stable Partition}
+
+For \(x::xs\), recursively partition the tail and put \(x\) in the first or
+second component depending on the predicate:
+\[
+  P(x) \Rightarrow (k,d)=(x::k',d'),\quad
+  \neg P(x) \Rightarrow (k,d)=(k',x::d')
+\]
+where \((k',d')=\mathrm{partition}(xs)\).  SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (new-keeps x)
+          (new-partition-out
+           (new-cons x xs)
+           (new-pair
+            (new-cons x (new-left (new-partition xs)))
+            (new-right (new-partition xs)))))
+        :name 'new-partition-keep)
+(assert '(implies
+          (not (new-keeps x))
+          (new-partition-out
+           (new-cons x xs)
+           (new-pair
+            (new-left (new-partition xs))
+            (new-cons x (new-right (new-partition xs))))))
+        :name 'new-partition-drop)
+(prove '(new-partition-out (new-cons x xs) ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-KEEPS X)
+  (VALUES
+    (NEW-PAIR
+      (NEW-CONS X (NEW-LEFT (NEW-PARTITION XS)))
+      (NEW-RIGHT (NEW-PARTITION XS))))
+  (VALUES
+    (NEW-PAIR
+      (NEW-LEFT (NEW-PARTITION XS))
+      (NEW-CONS X (NEW-RIGHT (NEW-PARTITION XS))))))
+\end{lstlisting}
+
+\subsection{New Addition Simplifier}
+
+For an addition node \(e_1+e_2\), fold constants when both arguments are
+constants; otherwise eliminate additive zero on either side; otherwise rebuild
+from recursively simplified children.  SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (new-both-const e1 e2)
+          (new-simplify-out
+           (new-plus e1 e2)
+           (new-const (new-add-value e1 e2))))
+        :name 'new-plus-fold-constants)
+(assert '(implies
+          (and (not (new-both-const e1 e2))
+               (new-zero e1))
+          (new-simplify-out
+           (new-plus e1 e2)
+           (new-simplify e2)))
+        :name 'new-plus-drop-left-zero)
+(assert '(implies
+          (and (not (new-both-const e1 e2))
+               (not (new-zero e1))
+               (new-zero e2))
+          (new-simplify-out
+           (new-plus e1 e2)
+           (new-simplify e1)))
+        :name 'new-plus-drop-right-zero)
+(assert '(implies
+          (and (not (new-both-const e1 e2))
+               (not (new-zero e1))
+               (not (new-zero e2)))
+          (new-simplify-out
+           (new-plus e1 e2)
+           (new-plus (new-simplify e1) (new-simplify e2))))
+        :name 'new-plus-rebuild)
+(prove '(new-simplify-out (new-plus e1 e2) ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-ZERO E2)
+  (ANSWER-IF (NEW-ZERO E1)
+    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
+      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
+      (VALUES (NEW-SIMPLIFY E2)))
+    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
+      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
+      (VALUES (NEW-SIMPLIFY E1))))
+  (ANSWER-IF (NEW-ZERO E1)
+    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
+      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
+      (VALUES (NEW-SIMPLIFY E2)))
+    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
+      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
+      (VALUES (NEW-PLUS (NEW-SIMPLIFY E1)
+                        (NEW-SIMPLIFY E2))))))
+\end{lstlisting}
+
+\subsection{New Shortest-Path Relaxation}
+
+For an edge \(u\xrightarrow{w}v\), update the distance and predecessor of
+\(v\) exactly when the candidate path through \(u\) improves the current
+distance:
+\begin{align*}
+  d(u)+w<d(v) &\Rightarrow
+    s'=\mathrm{pred}(\mathrm{dist}(s,v,d(u)+w),v,u),\\
+  \neg(d(u)+w<d(v)) &\Rightarrow s'=s.
+\end{align*}
+SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (new-lt (new-plus (new-distance u state) w)
+                  (new-distance v state))
+          (new-relax-out
+           state
+           u
+           v
+           w
+           (new-update-predecessor
+            (new-update-distance
+             state
+             v
+             (new-plus (new-distance u state) w))
+            v
+            u)))
+        :name 'new-relax-improves)
+(assert '(implies
+          (not (new-lt (new-plus (new-distance u state) w)
+                       (new-distance v state)))
+          (new-relax-out state u v w state))
+        :name 'new-relax-keeps-state)
+(prove '(new-relax-out state u v w ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF
+  (NEW-LT (NEW-PLUS (NEW-DISTANCE U STATE) W)
+          (NEW-DISTANCE V STATE))
+  (VALUES
+    (NEW-UPDATE-PREDECESSOR
+      (NEW-UPDATE-DISTANCE
+        STATE V (NEW-PLUS (NEW-DISTANCE U STATE) W))
+      V U))
+  (VALUES STATE))
+\end{lstlisting}
 
 \section{Working Example I: Unification}
 
@@ -294,6 +773,8 @@ of Manna and Waldinger's deductive-tableau derivations.  In particular:
 complete theory of real numbers;
 \item the GCD and quotient/remainder examples similarly use abstract integer
 comparison and subtraction predicates in the proof layer;
+\item the new stable-merge, stable-partition, simplifier, and graph-relaxation
+examples use abstract list, expression, and graph-state theories;
 \item the unification examples isolate key branches rather than proving a
 single global total-correctness theorem for all expression pairs;
 \item induction and termination arguments are represented by recursive
@@ -314,6 +795,7 @@ package:
 Then run:
 \begin{lstlisting}
 (mw-synthesis-examples)
+(new-synthesis-examples)
 \end{lstlisting}
 The result is a list pairing each example name with its extracted answer term.
 
@@ -326,9 +808,10 @@ terms in an object language.  For example, the unification proof answer contains
 \texttt{MW-SQUARE}, \texttt{MW-PLUS}, and \texttt{MW-SQRT}.  The GCD and
 quotient/remainder answers contain \texttt{MW-GT}, \texttt{MW-LT},
 \texttt{MW-MINUS}, \texttt{MW-GCD}, \texttt{MW-QR}, and pair projection
-symbols.  SNARK has proved that a witness with this shape exists under the
-stated obligations; it has not, by itself, supplied concrete Common Lisp
-definitions for those abstract symbols.
+symbols.  The new examples similarly contain abstract list constructors,
+rewrite predicates, and graph-state update symbols.  SNARK has proved that a
+witness with this shape exists under the stated obligations; it has not, by
+itself, supplied concrete Common Lisp definitions for those abstract symbols.
 
 The distribution therefore includes explicit executable interpretations.  For
 square root, the recursive skeleton becomes:
@@ -375,6 +858,7 @@ and recursive calls over Common Lisp integers:
 The following command runs all executable demonstrations:
 \begin{lstlisting}
 (mw-executable-synthesis-demos)
+(new-executable-synthesis-demos)
 \end{lstlisting}
 This split is deliberate: the proof answers document the synthesized control
 structure; the \texttt{MW-RUN-*} layer supplies the host-language semantics
@@ -424,6 +908,14 @@ What are other interesting, non-trivial examples like unification and binary sea
 \begin{lstlisting}
 Yes, let's do GCD and quotient remainder (and put those in the existing mw-... suite, since those are examples they did -- cite those works in the paper too).
 \end{lstlisting}
+\item
+\begin{lstlisting}
+Now, add a new file with "new" synthesis examples (since the ones we've done are all prior Manna/Waldinger examples). What are non-trivial examples that can really exercise this paradigm?
+\end{lstlisting}
+\item
+\begin{lstlisting}
+In the documentation, for each example, could you include the (1) mathematical/logical specification (2) that specification in SNARK (the input to the theorem prover) and (3) the answer? Right now, we don't have the intermediate SNARK representation.
+\end{lstlisting}
 \end{enumerate}
 
 \subsection{Research Queries and Sources Consulted}
@@ -467,6 +959,10 @@ examples directly.
 proof-answer/executable-code gap concrete.
 \item Extend the Manna--Waldinger suite with GCD and quotient/remainder
 examples and cite their classical sources.
+\item Add a separate new-example suite for stable merge, stable partition,
+addition simplification, and shortest-path relaxation.
+\item Extend the writeup with a catalogue that exposes each example's
+mathematical specification, SNARK prover input, and extracted answer.
 \end{enumerate}
 
 \subsection{Representative Agent Commands}
@@ -536,10 +1032,24 @@ apply_patch
   --eval '(format t "~S~%" (mw-executable-synthesis-demos))' \
   --eval '(sb-ext:quit)'
 
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-synthesis-examples.lisp")' \
+  --eval '(format t "~S~%" (new-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
 kpsewhich llncs.cls
 command -v latexmk
 command -v pdflatex
 mkdir -p docs/synthesis
+latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
 \end{lstlisting}
 
 \section{Extracted Answers}

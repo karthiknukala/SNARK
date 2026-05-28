@@ -19,4 +19,7 @@
                (:module "synthesis"
                 :components ((:file "synthesis-examples")
                              (:file "new-synthesis-examples")
-                             (:file "new-mst-synthesis")))))
+                             (:file "new-mst-fol-synthesis")
+                             (:file "new-mst-prelude-synthesis")
+                             (:file "new-mst-synthesis")
+                             (:file "new-mst-advanced-synthesis")))))

@@ -68,6 +68,83 @@ path-sensitive assumptions, and post-recursion redundancy checks.  That makes
 them good next steps beyond the Manna/Waldinger examples without requiring a
 full list or IF-expression theory inside SNARK.
 
+Strict MST FOL layer
+====================
+
+The file new-mst-fol-synthesis.lisp is the non-probabilistic first-principles
+MST pipeline.  It replaces the earlier named obligations with finite
+first-order certificates for lists/sets, graph edge membership, paths, cuts,
+components, bridge-based acyclicity, weight comparisons, exchange, blue/red
+rules, and Boruvka batch safety.
+
+Run:
+
+  (new-mst-fol-synthesis-examples)
+
+The strict layer extracts the program terms for the ordinary MST algorithms
+from those lower-level certificates:
+
+  (new-mst-fol-finite-list-membership)
+  (new-mst-fol-input-edge-from-finite-list)
+  (new-mst-fol-tree-subset-from-finite-lists)
+  (new-mst-fol-path-from-finite-list)
+  (new-mst-fol-cut-crossing-from-endpoints)
+  (new-mst-fol-component-from-path)
+  (new-mst-fol-acyclic-from-bridge-cuts)
+  (new-mst-fol-weight-comparison)
+  (new-mst-fol-lightest-crossing-from-finite-comparisons)
+  (new-mst-fol-spanning-tree-from-certificates)
+  (new-mst-fol-exchange-from-path-cut-weight)
+  (new-mst-fol-blue-rule-from-exchange)
+  (new-mst-fol-red-rule-from-cycle)
+  (new-mst-fol-batch-safety-from-component-cuts)
+  (new-mst-fol-kruskal-from-blue-rule)
+  (new-mst-fol-prim-from-blue-rule)
+  (new-mst-fol-boruvka-from-batch-safety)
+
+MST FOL prelude
+===============
+
+The file new-mst-prelude-synthesis.lisp reifies the first-order objects used by
+the MST developments: paths, cycles, cuts, finite edge sets, exchange trees,
+contractions, weight comparisons, samples, heap states, matroids, update
+streams, and message schedules.
+
+Run:
+
+  (new-mst-prelude-synthesis-examples)
+
+The prelude proves the core schematic lemmas and extracts their witness terms:
+
+  (new-mst-prelude-spanning-tree-definition)
+  (new-mst-prelude-mst-definition)
+  (new-mst-prelude-crossing-edge-witness)
+  (new-mst-prelude-exchange-spanning-lemma)
+  (new-mst-prelude-exchange-weight-lemma)
+  (new-mst-prelude-blue-rule-lemma)
+  (new-mst-prelude-red-rule-lemma)
+  (new-mst-prelude-contract-safe-lemma)
+  (new-mst-prelude-delete-useless-lemma)
+  (new-mst-prelude-boruvka-batch-lemma)
+  (new-mst-prelude-verification-lemma)
+  (new-mst-prelude-replacement-edge-lemma)
+  (new-mst-prelude-second-best-lemma)
+  (new-mst-prelude-f-heavy-filter-lemma)
+  (new-mst-prelude-kkt-filter-lemma)
+  (new-mst-prelude-soft-heap-repair-lemma)
+  (new-mst-prelude-matroid-greedy-lemma)
+  (new-mst-prelude-dynamic-lemma)
+  (new-mst-prelude-ghs-lemma)
+  (new-mst-prelude-reverse-delete-algorithm)
+  (new-mst-prelude-kruskal-algorithm)
+  (new-mst-prelude-prim-algorithm)
+  (new-mst-prelude-boruvka-algorithm)
+  (new-mst-prelude-filter-kruskal-algorithm)
+
+This prelude is now the broader object vocabulary and advanced-refinement
+layer.  For the non-probabilistic correctness spine, use
+new-mst-fol-synthesis.lisp as the source of the lower finite FOL derivations.
+
 Hierarchical MST refinements
 ============================
 
@@ -95,3 +172,43 @@ The SNARK layer treats trees, forests, cuts, batches, and strategies as
 first-order objects.  The executable layer interprets the extracted leaves over
 finite Lisp graphs, showing Kruskal, Prim/Jarnik, and Boruvka as concrete
 implementations of the same safe-extension refinement.
+
+Advanced MST refinements
+========================
+
+The file new-mst-advanced-synthesis.lisp continues the MST development with
+standard refinement and optimization ideas from the MST literature:
+
+  (new-mst-red-rule-refinement)
+  (new-mst-reverse-delete-refinement)
+  (new-mst-contract-delete-refinement)
+  (new-mst-boruvka-phase-refinement)
+  (new-mst-kruskal-variants-refinement)
+  (new-mst-prim-queue-refinement)
+  (new-mst-verification-refinement)
+  (new-mst-replacement-edge-refinement)
+  (new-mst-second-best-refinement)
+  (new-mst-kkt-filter-refinement)
+  (new-mst-soft-heap-refinement)
+  (new-mst-matroid-greedy-refinement)
+  (new-mst-offline-dynamic-refinement)
+  (new-mst-ghs-distributed-refinement)
+  (new-mst-advanced-synthesis-examples)
+
+The executable interpretations include:
+
+  (new-run-mst-reverse-delete graph)
+  (new-run-mst-boruvka-phases graph)
+  (new-run-mst-verify graph tree)
+  (new-run-mst-replacement-edges graph tree)
+  (new-run-mst-second-best tree replacements)
+  (new-run-mst-kruskal-variant graph :filter-kruskal)
+  (new-run-mst-prim-variant graph :fibonacci-heap)
+  (new-run-mst-kkt-filter graph)
+  (new-run-mst-advanced-demo)
+
+As in the base MST suite, the SNARK answers are symbolic refinement programs.
+The NEW-RUN-MST-* functions instantiate those symbols over finite Lisp graphs
+and expose the gap between the extracted proof term and executable data
+structures such as union-find, frontier queues, verification paths, and
+component contraction.

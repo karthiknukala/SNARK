@@ -39,7 +39,9 @@ partition, and a Boyer--Moore-style simplifier for normal-form IF-expressions
 \cite{BoyerMoore1979}.  A separate MST development treats the classical
 Kruskal, Jarnik--Prim, and Boruvka algorithms
 \cite{Kruskal1956,Jarnik1930,Prim1957,Boruvka1926} as logical refinements of
-a shared safe-extension skeleton.  It is not a verbatim
+a shared safe-extension skeleton, then extends that skeleton with red-rule
+deletion, contraction, verification, replacement-edge, randomized filtering,
+soft-heap, matroid, dynamic, and distributed refinements.  It is not a verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
 extract program terms from proofs.  It also includes executable Lisp
@@ -47,8 +49,7 @@ interpretations of the extracted terms, making explicit the gap between a proof
 answer and a runnable program.
 
 \keywords{SNARK \and Answer extraction \and Deductive synthesis \and
-Unification \and Binary search \and Greatest common divisor \and Integer
-division}
+Unification \and Binary search \and Minimum spanning tree}
 \end{abstract}
 
 \section{Overview}
@@ -101,7 +102,27 @@ It also includes executable interpretations:
 (new-executable-synthesis-demos)
 \end{lstlisting}
 
-A third file, \texttt{new-mst-synthesis.lisp}, develops minimum-spanning-tree
+A third file, \texttt{new-mst-fol-synthesis.lisp}, adds the strict
+non-probabilistic MST FOL layer:
+\begin{lstlisting}
+(new-mst-fol-synthesis-examples)
+\end{lstlisting}
+It replaces the ordinary MST named obligations with finite first-order
+certificates for lists, graph edge membership, paths, cuts, components,
+bridge-based acyclicity, finite weight comparison, exchange, blue/red rules,
+Boruvka batch safety, and the Kruskal/Prim/Boruvka derivations.
+
+A fourth file, \texttt{new-mst-prelude-synthesis.lisp}, introduces the broader
+first-order MST prelude:
+\begin{lstlisting}
+(new-mst-prelude-synthesis-examples)
+\end{lstlisting}
+It reifies paths, cycles, cuts, finite edge sets, exchange trees,
+contractions, samples, heap states, matroids, update streams, and message
+schedules as first-order objects, then proves the core schematic lemmas used
+by the algorithm layer, including the probabilistic and data-structure hooks.
+
+A fifth file, \texttt{new-mst-synthesis.lisp}, develops minimum-spanning-tree
 algorithms as a refinement hierarchy:
 \begin{lstlisting}
 (new-mst-synthesis-examples)
@@ -109,6 +130,13 @@ algorithms as a refinement hierarchy:
 (new-run-mst graph :strategy :prim)
 (new-run-mst graph :strategy :boruvka)
 (new-run-mst-demo)
+\end{lstlisting}
+
+A sixth file, \texttt{new-mst-advanced-synthesis.lisp}, adds the standard
+optimization and verification refinements around that hierarchy:
+\begin{lstlisting}
+(new-mst-advanced-synthesis-examples)
+(new-run-mst-advanced-demo)
 \end{lstlisting}
 
 \section{Answer Extraction in the Development}
@@ -613,6 +641,256 @@ Answer:
             (NEW-EXTEND-FALSE (NEW-CONDITION EXPR) ENV)))))))
 \end{lstlisting}
 
+\subsection{Strict MST FOL Layer}
+
+The non-probabilistic MST spine is now developed below the earlier prelude
+predicates.  Finite sets/lists, paths, cuts, components, acyclicity, and weight
+comparison are represented by first-order certificate predicates.  For example,
+graph edge membership is not asserted as a high-level MST fact; it is derived
+from membership in the finite graph edge list:
+\begin{lstlisting}
+(assert '(mstf-edges-of g edges)
+        :name 'mstf-graph-edge-list)
+(assert '(mstf-finite-list edges)
+        :name 'mstf-finite-edge-list)
+(assert '(mstf-member edge edges)
+        :name 'mstf-edge-member-certificate)
+(assert '(implies
+          (and (mstf-edges-of g edges)
+               (mstf-finite-list edges)
+               (mstf-member edge edges))
+          (mstf-in-graph g edge))
+        :name 'mstf-input-edge-definition)
+(prove '(mstf-input-edge-out g edge ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES EDGE)
+\end{lstlisting}
+
+Reachability is likewise represented by finite path certificates:
+\begin{lstlisting}
+(assert '(mstf-path-list path)
+        :name 'mstf-path-is-list)
+(assert '(mstf-path-connects path u v)
+        :name 'mstf-path-endpoints)
+(assert '(mstf-path-edges-in-tree path tree)
+        :name 'mstf-path-tree-certificate)
+(assert '(implies
+          (and (mstf-path-list path)
+               (mstf-path-connects path u v)
+               (mstf-path-edges-in-tree path tree))
+          (mstf-reaches tree u v path))
+        :name 'mstf-reachability-definition)
+(prove '(mstf-path-out tree u v path ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES PATH)
+\end{lstlisting}
+
+The cut and finite-weight layers provide the data needed by the exchange
+argument:
+\begin{lstlisting}
+(CUT-CROSSING-FROM-ENDPOINTS
+  (VALUES EDGE))
+
+(WEIGHT-COMPARISON
+  (VALUES EDGE))
+
+(LIGHTEST-CROSSING-FROM-FINITE-COMPARISONS
+  (VALUES EDGE))
+\end{lstlisting}
+Acyclicity is supplied by bridge-cut certificates for every selected tree
+edge, and spanning trees are then derived from graph-edge inclusion, finite
+path certificates for all connected pairs, and those bridge certificates:
+\begin{lstlisting}
+(ACYCLIC-FROM-BRIDGE-CUTS
+  (VALUES TREE))
+
+(SPANNING-TREE-FROM-CERTIFICATES
+  (VALUES TREE))
+\end{lstlisting}
+
+The exchange theorem is now stated over the lower path/cut/weight facts:
+\begin{lstlisting}
+(EXCHANGE-FROM-PATH-CUT-WEIGHT
+  (VALUES (MSTF-EXCHANGE TREE OLD EDGE)))
+\end{lstlisting}
+The blue and red rules no longer take \texttt{safe-edge} or
+\texttt{heaviest-on-cycle} as opaque MST obligations.  They consume finite
+path/cut/cycle/weight evidence and extract:
+\begin{lstlisting}
+(BLUE-RULE-FROM-EXCHANGE
+  (VALUES
+    (MSTF-EXCHANGE TREE (MSTF-CROSSING-EDGE PATH CUT) EDGE)))
+
+(RED-RULE-FROM-CYCLE
+  (VALUES (MSTF-DELETE-EDGE EDGE G)))
+\end{lstlisting}
+Finally, the ordinary algorithms are consequences of these lemmas:
+\begin{lstlisting}
+(BATCH-SAFETY-FROM-COMPONENT-CUTS
+  (VALUES (MSTF-ADD-BATCH BATCH FOREST)))
+
+(KRUSKAL-FROM-BLUE-RULE
+  (VALUES (MSTF-KRUSKAL-STEP G (MSTF-ADD-EDGE EDGE FOREST))))
+
+(PRIM-FROM-BLUE-RULE
+  (VALUES (MSTF-PRIM-STEP G (MSTF-ADD-EDGE EDGE FOREST) ROOT)))
+
+(BORUVKA-FROM-BATCH-SAFETY
+  (VALUES (MSTF-BORUVKA-PHASE G (MSTF-CONTRACT-SET G BATCH))))
+\end{lstlisting}
+
+\subsection{MST Prelude: Reified FOL Objects}
+
+The broader MST development still uses a prelude.  Since ordinary FOL does not
+contain transitive closure, set summation, probability spaces, heaps, or
+distributed schedules as built-ins, the prelude treats each as a first-order
+object.  The main reified concepts are:
+\begin{lstlisting}
+paths, cycles, cuts, finite edge sets, exchange trees
+contractions, weight comparisons, samples, heap states
+matroids, update streams, distributed message schedules
+\end{lstlisting}
+Definitions are then stated over those objects.  For example, a spanning tree
+is exposed through three first-order predicates:
+\begin{lstlisting}
+(assert '(mstp-all-input-edges g tree)
+        :name 'mstp-input-edges-premise)
+(assert '(mstp-spans g tree)
+        :name 'mstp-spans-premise)
+(assert '(mstp-acyclic tree)
+        :name 'mstp-acyclic-premise)
+(assert '(implies
+          (and (mstp-all-input-edges g tree)
+               (mstp-spans g tree)
+               (mstp-acyclic tree))
+          (mstp-spanning-tree g tree))
+        :name 'mstp-spanning-tree-definition)
+(prove '(mstp-spanning-tree-out g tree ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES TREE)
+\end{lstlisting}
+
+The MST definition likewise keeps competitors as first-order tree objects:
+\begin{lstlisting}
+(assert '(mstp-spanning-tree g tree)
+        :name 'mstp-mst-spanning-premise)
+(assert '(mstp-competitor-no-lighter g tree other)
+        :name 'mstp-mst-competitor-premise)
+(assert '(implies
+          (and (mstp-spanning-tree g tree)
+               (mstp-competitor-no-lighter g tree other))
+          (mstp-mst g tree))
+        :name 'mstp-mst-definition)
+(prove '(mstp-mst-out g tree ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES TREE)
+\end{lstlisting}
+
+\subsection{MST Prelude: Exchange and Cut Lemmas}
+
+The prelude derives the witness terms used by the blue/cut rule.  A reified
+tree path crossing a cut has a selected crossing edge:
+\begin{lstlisting}
+(prove '(mstp-crossing-witness-out tree path cut ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (MSTP-CROSSING-EDGE PATH CUT))
+\end{lstlisting}
+The spanning and weight halves of the exchange argument extract:
+\begin{lstlisting}
+(EXCHANGE-SPANNING-LEMMA
+  (VALUES (MSTP-EXCHANGE TREE OLD EDGE)))
+
+(EXCHANGE-WEIGHT-LEMMA
+  (VALUES (MSTP-EXCHANGE TREE OLD EDGE)))
+\end{lstlisting}
+Assembling those gives the blue-rule witness:
+\begin{lstlisting}
+(BLUE-RULE-LEMMA
+  (VALUES
+    (MSTP-EXCHANGE TREE (MSTP-CROSSING-EDGE PATH CUT) EDGE)))
+\end{lstlisting}
+The dual red/cycle rule produces the deletion program:
+\begin{lstlisting}
+(RED-RULE-LEMMA
+  (VALUES (MSTP-DELETE-EDGE EDGE G)))
+\end{lstlisting}
+
+\subsection{MST Prelude: Reduction and Certification Lemmas}
+
+The remaining prelude lemmas produce the pseudo-code terms consumed by the MST
+algorithm layer:
+\begin{lstlisting}
+(CONTRACT-SAFE-LEMMA
+  (VALUES (MSTP-LIFT EDGE TREE)))
+
+(DELETE-USELESS-LEMMA
+  (VALUES (MSTP-DELETE-EDGE EDGE G)))
+
+(BORUVKA-BATCH-LEMMA
+  (VALUES (MSTP-LIFT BATCH TREE)))
+
+(VERIFICATION-LEMMA
+  (VALUES (MSTP-VERIFY-TREE G TREE)))
+
+(REPLACEMENT-EDGE-LEMMA
+  (VALUES (MSTP-RECORD-REPLACEMENT EDGE REPLACEMENT)))
+
+(SECOND-BEST-LEMMA
+  (VALUES (MSTP-SECOND-BEST-FROM-REPLACEMENTS TREE REPLACEMENT)))
+
+(F-HEAVY-FILTER-LEMMA
+  (VALUES (MSTP-FILTER-HEAVY G SAMPLE-TREE)))
+
+(KKT-FILTER-LEMMA
+  (VALUES (MSTP-KKT FILTERED RANDOM-SOURCE)))
+
+(SOFT-HEAP-REPAIR-LEMMA
+  (VALUES
+    (MSTP-REPAIR-CORRUPTIONS G
+      (MSTP-SOFT-HEAP-CANDIDATES G EPSILON))))
+
+(MATROID-GREEDY-LEMMA
+  (VALUES (MSTP-MATROID-GREEDY MATROID ORDER)))
+
+(DYNAMIC-LEMMA
+  (VALUES (MSTP-DYNAMIC-SEQUENCE G UPDATES)))
+
+(GHS-LEMMA
+  (VALUES (MSTP-GHS-PHASE G FRAGMENTS)))
+\end{lstlisting}
+The algorithm layer then consumes these lemma terms.  For example:
+\begin{lstlisting}
+(REVERSE-DELETE-ALGORITHM
+  (VALUES (MSTP-REVERSE-DELETE (MSTP-DELETE-EDGE EDGE G))))
+
+(KRUSKAL-ALGORITHM
+  (VALUES (MSTP-KRUSKAL-STEP G (MSTP-ADD-EDGE EDGE FOREST))))
+
+(PRIM-ALGORITHM
+  (VALUES (MSTP-PRIM-STEP G (MSTP-ADD-EDGE EDGE FOREST) U)))
+
+(BORUVKA-ALGORITHM
+  (VALUES (MSTP-BORUVKA-PHASE G (MSTP-CONTRACT-SET G BATCH))))
+
+(FILTER-KRUSKAL-ALGORITHM
+  (VALUES (MSTP-FILTER-KRUSKAL FILTERED)))
+\end{lstlisting}
+
 \subsection{New MST: Abstract Specification}
 
 The MST development reifies sets, cuts, forests, batches, and strategies as
@@ -813,6 +1091,275 @@ answer term; the executable layer supplies the concrete dispatch:
 On the sample finite graph, all three concrete interpretations return total
 weight \(9\), though the edge order and tie choices differ.
 
+\subsection{Advanced MST: Red Rule and Reverse Delete}
+
+The dual of the cut rule is the red rule: a heaviest edge on a cycle can be
+discarded without changing the existence of an MST.  As a one-step refinement:
+\[
+  \mathrm{HeaviestOnCycle}(G,e,C)\Rightarrow G'=G-e.
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(new-heaviest-on-cycle g edge cycle)
+        :name 'new-mst-red-cycle-premise)
+(assert '(implies
+          (new-heaviest-on-cycle g edge cycle)
+          (new-mst-red-rule-out
+           g
+           edge
+           (new-mst-delete-edge edge g)))
+        :name 'new-mst-red-rule)
+(prove '(new-mst-red-rule-out g edge ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-DELETE-EDGE EDGE G))
+\end{lstlisting}
+
+Reverse-delete repeatedly applies this deletion test in descending weight
+order, preserving an edge exactly when its removal would disconnect the graph:
+\begin{lstlisting}
+(assert '(or (new-still-spans-after-delete g edge)
+             (not (new-still-spans-after-delete g edge)))
+        :name 'new-mst-reverse-delete-cases)
+(prove '(new-mst-reverse-delete-out g edge ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-STILL-SPANS-AFTER-DELETE G EDGE)
+  (VALUES (NEW-MST-REVERSE-DELETE (NEW-MST-DELETE-EDGE EDGE G)))
+  (VALUES (NEW-MST-REVERSE-DELETE G)))
+\end{lstlisting}
+
+\subsection{Advanced MST: Contract/Delete Normalization}
+
+The red and blue rules combine into a graph-normalization refinement.  Safe
+edges may be contracted; useless edges may be deleted.  The implementation
+therefore exposes a normalizing branch before choosing a concrete algorithm:
+\begin{lstlisting}
+(assert '(or (new-safe-edge g forest edge)
+             (new-useless-edge g forest edge))
+        :name 'new-mst-contract-delete-cases)
+(prove '(new-mst-contract-delete-out g forest edge ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-USELESS-EDGE G FOREST EDGE)
+  (ANSWER-IF (NEW-SAFE-EDGE G FOREST EDGE)
+    (VALUES (NEW-MST-CONTRACT-EDGE EDGE G))
+    (VALUES (NEW-MST-DELETE-EDGE EDGE G)))
+  (VALUES (NEW-MST-CONTRACT-EDGE EDGE G)))
+\end{lstlisting}
+The last branch is logically unreachable under the asserted disjunction unless
+the safe-edge case holds.  This is a useful example of the gap between a proof
+answer and a cleaned host-language program: the executable layer may simplify
+the branch once the case split is interpreted.
+
+\subsection{Advanced MST: Boruvka Phase}
+
+The base MST file had a Boruvka leaf.  The advanced file records the full phase
+shape: each component chooses a minimum outgoing edge, the whole batch is safe,
+the graph is contracted, and the recursive result is lifted:
+\begin{lstlisting}
+(assert '(new-components-cover g forest)
+        :name 'new-mst-boruvka-components-premise)
+(assert '(new-each-component-lightest-outgoing g forest batch)
+        :name 'new-mst-boruvka-lightest-premise)
+(prove '(new-mst-boruvka-phase-out g forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES
+  (NEW-MST-LIFT BATCH
+    (NEW-MST-GREEDY
+      (NEW-MST-CONTRACT-SET G BATCH)
+      (NEW-MST-CONTRACT-FOREST FOREST BATCH))))
+\end{lstlisting}
+
+\subsection{Advanced MST: Kruskal Variants}
+
+Kruskal-style algorithms share the same logical filter, but differ in how they
+realize the scan: sorted edge list, union-find scan, or Filter-Kruskal
+\cite{Kruskal1956,CheritonTarjan1976,OsipovSandersSingler2009}.  SNARK sees
+these as policy refinements:
+\begin{lstlisting}
+(assert '(or (new-kruskal-policy-sorted policy)
+             (new-kruskal-policy-union-find policy)
+             (new-kruskal-policy-filter policy))
+        :name 'new-mst-kruskal-policy-cases)
+(prove '(new-mst-kruskal-variant-out g policy ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-KRUSKAL-POLICY-FILTER POLICY)
+  (ANSWER-IF (NEW-KRUSKAL-POLICY-UNION-FIND POLICY)
+    (VALUES (NEW-MST-UNION-FIND-SCAN G))
+    (ANSWER-IF (NEW-KRUSKAL-POLICY-SORTED POLICY)
+      (VALUES (NEW-MST-SORTED-SCAN G))
+      (VALUES (NEW-MST-FILTER-KRUSKAL G))))
+  (ANSWER-IF (NEW-KRUSKAL-POLICY-SORTED POLICY)
+    (ANSWER-IF (NEW-KRUSKAL-POLICY-UNION-FIND POLICY)
+      (VALUES (NEW-MST-UNION-FIND-SCAN G))
+      (VALUES (NEW-MST-SORTED-SCAN G)))
+    (VALUES (NEW-MST-UNION-FIND-SCAN G))))
+\end{lstlisting}
+
+\subsection{Advanced MST: Prim Queue Refinements}
+
+Prim/Jarnik admits the same kind of policy refinement.  The mathematical choice
+is still the lightest frontier edge; the implementation policy chooses a dense
+array scan, binary heap, Fibonacci heap, or pairing heap.  The Fibonacci-heap
+case connects to the Fredman--Tarjan network-optimization development
+\cite{FredmanTarjan1987}.
+SNARK input:
+\begin{lstlisting}
+(assert '(or (new-prim-policy-dense policy)
+             (new-prim-policy-binary-heap policy)
+             (new-prim-policy-fibonacci-heap policy)
+             (new-prim-policy-pairing-heap policy))
+        :name 'new-mst-prim-policy-cases)
+(prove '(new-mst-prim-variant-out g root policy ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-PRIM-POLICY-DENSE POLICY)
+  (VALUES (NEW-MST-DENSE-PRIM G ROOT))
+  (VALUES (NEW-MST-HEAP-PRIM G ROOT QUEUE)))
+\end{lstlisting}
+
+\subsection{Advanced MST: Verification}
+
+The verification theorem turns MST construction into a certifier.  A tree is
+minimum if it spans, is acyclic, and every non-tree edge is at least as heavy
+as the maximum edge on the corresponding tree path
+\cite{DixonRauchTarjan1992}:
+\begin{lstlisting}
+(assert '(new-tree-spans g tree)
+        :name 'new-mst-verify-spans-premise)
+(assert '(new-tree-acyclic g tree)
+        :name 'new-mst-verify-acyclic-premise)
+(assert '(new-path-max-dominates-nontree-edges g tree)
+        :name 'new-mst-verify-path-max-premise)
+(prove '(new-mst-verifier-out g tree ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-VERIFY-TREE G TREE))
+\end{lstlisting}
+
+\subsection{Advanced MST: Replacement Edges and Second Best}
+
+Sensitivity analysis asks, for each tree edge \(e\), for the lightest
+non-tree edge reconnecting the two components of \(T-e\).  This supports
+replacement-edge tables, second-best MSTs, and dynamic-update certificates
+\cite{DixonRauchTarjan1992,Eppstein1994}.
+SNARK input:
+\begin{lstlisting}
+(assert '(new-tree-edge tree edge)
+        :name 'new-mst-replacement-tree-edge-premise)
+(assert '(new-min-replacement-edge g tree edge replacement)
+        :name 'new-mst-replacement-min-premise)
+(prove '(new-mst-replacement-out g tree ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-RECORD-REPLACEMENT EDGE REPLACEMENT))
+\end{lstlisting}
+Once all replacements are certified, the next refinement chooses the least
+increase over the original MST:
+\begin{lstlisting}
+(VALUES (NEW-MST-SECOND-BEST-FROM-REPLACEMENTS TREE REPLACEMENTS))
+\end{lstlisting}
+
+\subsection{Advanced MST: Karger--Klein--Tarjan Filtering}
+
+The Karger--Klein--Tarjan algorithm uses random sampling, an MST of the sample,
+and deletion of \(F\)-heavy edges before recursing
+\cite{KargerKleinTarjan1995}.  Probability and expected-time bounds live in
+the metatheory; the SNARK refinement captures the correctness-preserving
+filter:
+\begin{lstlisting}
+(assert '(new-random-sample g random-source sample)
+        :name 'new-mst-kkt-sample-premise)
+(assert '(new-sample-mst sample sample-tree)
+        :name 'new-mst-kkt-sample-tree-premise)
+(assert '(new-f-heavy-filtered g sample-tree filtered)
+        :name 'new-mst-kkt-filtered-premise)
+(prove '(new-mst-kkt-out g random-source ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-KKT FILTERED RANDOM-SOURCE))
+\end{lstlisting}
+
+\subsection{Advanced MST: Soft-Heap Refinement}
+
+Chazelle's MST algorithm uses soft heaps to trade exact key order for a
+controlled corruption discipline \cite{Chazelle2000}.  The SNARK version
+abstracts the data structure as candidate generation plus repair/filtering:
+\begin{lstlisting}
+(assert '(new-soft-heap-candidate-set g epsilon batch)
+        :name 'new-mst-soft-candidates-premise)
+(assert '(new-corruption-repair-valid g batch filtered)
+        :name 'new-mst-soft-repair-premise)
+(prove '(new-mst-soft-heap-out g epsilon forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES
+  (NEW-MST-GREEDY
+    (NEW-MST-REPAIR-CORRUPTIONS G
+      (NEW-MST-SOFT-HEAP-CANDIDATES G EPSILON))
+    FOREST))
+\end{lstlisting}
+
+\subsection{Advanced MST: Matroid Greedy}
+
+The graphic-matroid view generalizes Kruskal: an MST is a minimum-weight basis
+of the graphic matroid, and the greedy theorem for matroids explains why the
+cycle test is enough \cite{Edmonds1971,PettieRamachandran2002}.
+SNARK input:
+\begin{lstlisting}
+(assert '(new-matroid matroid)
+        :name 'new-mst-matroid-premise)
+(assert '(new-graphic-matroid-of g matroid)
+        :name 'new-mst-graphic-matroid-premise)
+(assert '(new-weight-order-for matroid weight-order)
+        :name 'new-mst-weight-order-premise)
+(prove '(new-mst-matroid-out g matroid weight-order ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-MATROID-GREEDY MATROID WEIGHT-ORDER))
+\end{lstlisting}
+
+\subsection{Advanced MST: Dynamic and Distributed Hooks}
+
+Two final refinements expose interfaces to the dynamic and distributed MST
+literature.  Offline dynamic MST maintenance computes a sequence of MSTs from
+a known update stream \cite{Eppstein1994}; GHS-style distributed MST
+construction merges fragments through minimum-outgoing-edge messages
+\cite{GallagerHumbletSpira1983}.
+SNARK answers:
+\begin{lstlisting}
+(OFFLINE-DYNAMIC-REFINEMENT
+  (VALUES (NEW-MST-DYNAMIC-SEQUENCE G UPDATES)))
+
+(GHS-DISTRIBUTED-REFINEMENT
+  (VALUES (NEW-MST-GHS-PHASE G FRAGMENTS)))
+\end{lstlisting}
+
 \section{Working Example I: Unification}
 
 Manna and Waldinger's unification paper specifies unification as the task of
@@ -1005,6 +1552,11 @@ Kruskal, Jarnik--Prim, or Boruvka
 development first states what an MST witness is, then introduces a generic
 greedy extension operator, then refines that extension through the cut
 property, and only at the leaves commits to the familiar algorithm families.
+The no-shortcut version has an explicit prelude in front of this ladder:
+paths, cuts, cycles, exchange trees, contractions, finite weight comparisons,
+samples, heaps, matroids, update streams, and message schedules are all
+first-order objects, and the algorithmic rules consume the lemma terms
+extracted from that prelude.
 
 \subsection{Reifying the Specification}
 
@@ -1124,6 +1676,37 @@ weight \(9\).  Their edge orders differ because the concrete algorithms expose
 different traversal and tie-breaking choices, but they instantiate the same
 abstract refinement chain.
 
+\subsection{Optimization and Certification Refinements}
+
+The advanced MST file adds a second ladder on top of the basic one.  It starts
+from the blue/cut rule already used above and adds the red/cycle rule, so the
+development can both add safe edges and remove provably useless edges.  That
+gives the contract/delete normalization pattern:
+\[
+  \mathrm{Safe}(e)\Rightarrow \mathrm{contract}(e),\qquad
+  \mathrm{Useless}(e)\Rightarrow \mathrm{delete}(e).
+\]
+Reverse-delete and Filter-Kruskal use deletion directly
+\cite{CheritonTarjan1976,OsipovSandersSingler2009}.  Karger--Klein--Tarjan
+and soft-heap filtering use the same rule after sampling or approximate
+candidate generation \cite{KargerKleinTarjan1995,Chazelle2000}.
+
+The same suite separates correctness from data-structure selection.  Kruskal
+can be a sorted scan, a union-find scan, or a filtering algorithm.
+Prim/Jarnik can use a dense scan or priority-queue ADTs, including Fibonacci
+heaps \cite{FredmanTarjan1987}.  These refinements do not change the
+mathematical witness relation; they refine the implementation of the symbolic
+operations that the proof term names.
+
+Finally, the suite adds certifying and sensitivity-oriented developments:
+verification by the tree-path maximum condition, replacement edges for every
+tree edge, a second-best MST witness, offline dynamic-update hooks, and a
+GHS-style distributed phase
+\cite{DixonRauchTarjan1992,Eppstein1994,GallagerHumbletSpira1983}.  These are
+not merely more ways to compute the same tree.  They show that answer
+extraction can target checkers, repair tables, and algorithm-family interfaces
+as well as direct constructors.
+
 \section{Limitations}
 
 These examples are deliberately small.  They are working SNARK demonstrations
@@ -1136,8 +1719,17 @@ complete theory of real numbers;
 comparison and subtraction predicates in the proof layer;
 \item the new stable-merge, stable-partition, and IF-expression examples use
 abstract list and IF-expression theories;
-\item the MST development reifies reachability, cuts, candidate trees, and
-weight comparison as first-order predicates over finite graph objects;
+\item the strict MST FOL layer replaces the non-probabilistic named
+obligations with finite first-order certificates, but it still uses explicit
+finite certificates rather than synthesizing induction principles over
+arbitrary list length;
+\item the broader MST prelude reifies paths, cuts, cycles, candidate trees,
+weight comparisons, exchanges, contractions, samples, heap states, matroids,
+update streams, and message schedules as first-order objects;
+\item probabilistic and amortized-time claims, such as the expected-time KKT
+bound or soft-heap complexity analysis, are not themselves proved in FOL here;
+the FOL layer proves the corresponding correctness/refinement terms over
+reified samples and heap states;
 \item the unification examples isolate key branches rather than proving a
 single global total-correctness theorem for all expression pairs;
 \item induction and termination arguments are represented by recursive
@@ -1159,7 +1751,10 @@ Then run:
 \begin{lstlisting}
 (mw-synthesis-examples)
 (new-synthesis-examples)
+(new-mst-fol-synthesis-examples)
+(new-mst-prelude-synthesis-examples)
 (new-mst-synthesis-examples)
+(new-mst-advanced-synthesis-examples)
 \end{lstlisting}
 The result is a list pairing each example name with its extracted answer term.
 
@@ -1174,10 +1769,21 @@ quotient/remainder answers contain \texttt{MW-GT}, \texttt{MW-LT},
 \texttt{MW-MINUS}, \texttt{MW-GCD}, \texttt{MW-QR}, and pair projection
 symbols.  The new examples similarly contain abstract list constructors,
 IF-expression accessors, path-assumption predicates, and recursive
-simplification calls.  The MST proof answers contain abstract spanning-tree,
-safe-edge, cut, batch, and strategy predicates.  SNARK has proved that a
-witness with this shape exists under the stated obligations; it has not, by
-itself, supplied concrete Common Lisp definitions for those abstract symbols.
+simplification calls.  The strict MST layer starts from finite certificates:
+\begin{lstlisting}
+MSTF-MEMBER, MSTF-PATH-LIST, MSTF-CROSSES-CUT,
+MSTF-DOMINATES-LIST
+\end{lstlisting}
+From those certificates, SNARK extracts:
+\begin{lstlisting}
+MSTF-EXCHANGE, MSTF-KRUSKAL-STEP,
+MSTF-PRIM-STEP, MSTF-BORUVKA-PHASE
+\end{lstlisting}
+The broader MST prelude still contains abstract predicates for filtering, soft
+heaps, matroids, replacement, and message schedules.  SNARK has proved that
+witnesses with these shapes exist under the stated finite certificates; it has
+not, by itself, supplied concrete Common Lisp definitions for those abstract
+symbols.
 
 The distribution therefore includes explicit executable interpretations.  For
 square root, the recursive skeleton becomes:
@@ -1226,6 +1832,7 @@ The following command runs all executable demonstrations:
 (mw-executable-synthesis-demos)
 (new-executable-synthesis-demos)
 (new-run-mst-demo)
+(new-run-mst-advanced-demo)
 \end{lstlisting}
 This split is deliberate: the proof answers document the synthesized control
 structure; the \texttt{MW-RUN-*} and \texttt{NEW-RUN-*} layers supply the
@@ -1295,6 +1902,22 @@ Under new examples, let's do a thorough MST development. I want to do an abstrac
 
 Please encode the algorithm abstractly and hierarchically frame the various algorithms as logical refinements, with the SNARK conditions/specifications and the subsequent answer extraction providing the refinements and their direct implementations.
 \end{lstlisting}
+\item
+\begin{lstlisting}
+There's a whole literature on MST algorithm development. What other examples, refinements, and optimizations can we encode logically and generate algorithms/code via SNARK for?
+\end{lstlisting}
+\item
+\begin{lstlisting}
+Ok, yes -- let's do all of these developments. Please implement these, show their SNARK derivation/answer extractions, and catalogue all of these variants.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+I want everything proven from first principles in FOL. The point is not to shortcut ANYTHIING.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+Yes, reify these via an MST prelude development. Get the appropriate FOL objects/concepts, the corresponding lemmas (and their corresponding answer extraction/program terms), and then the algorithms.
+\end{lstlisting}
 \end{enumerate}
 
 \subsection{Research Queries and Sources Consulted}
@@ -1313,12 +1936,23 @@ Manna Waldinger gcd intermittent assertions program correctness
 "Is 'Sometime' Sometimes Better Than 'Always'" "Manna" "Waldinger" gcd
 Boyer Moore A Computational Logic IF expression normal form simplifier
 "A Computational Logic" Boyer Moore IF expressions normal form
+minimum spanning tree algorithm development literature Boruvka Kruskal Prim
+Karger Klein Tarjan randomized linear time minimum spanning tree
+Cheriton Tarjan finding minimum spanning trees
+Fredman Tarjan Fibonacci heaps minimum spanning tree
+Chazelle minimum spanning tree inverse Ackermann
+Pettie Ramachandran optimal minimum spanning tree algorithm
+Tarjan verification sensitivity analysis minimum spanning trees
+Gallager Humblet Spira distributed minimum weight spanning trees
+Filter-Kruskal minimum spanning tree algorithm
+Edmonds matroids and the greedy algorithm
 \end{lstlisting}
 The most relevant sources were the SRI pages and PDFs for unification and
 binary search, the IJCAI short paper on binary search, the SRI page for the
 TOPLAS deductive-synthesis paper, the SRI page for the intermittent-assertion
 paper, the Isabelle theory page summarizing a Manna--Waldinger-style
-unification formalization, and Boyer and Moore's \emph{A Computational Logic}.
+unification formalization, Boyer and Moore's \emph{A Computational Logic}, and
+the MST literature cited in the bibliography.
 
 \subsection{Concise Reasoning Summary}
 
@@ -1350,6 +1984,14 @@ normal-form IF-expression simplifier and rebuild the distribution.
 first-order MST postcondition, refines through safe extensions and the cut
 property, and interprets Kruskal, Prim/Jarnik, and Boruvka as concrete
 strategy refinements.
+\item Add an advanced MST suite covering red-rule deletion, reverse-delete,
+contract/delete normalization, full Boruvka phases, Kruskal and Prim
+implementation policies, MST verification, replacement edges, KKT filtering,
+soft-heap repair, matroid greedy abstraction, offline dynamic hooks, and
+GHS-style distributed phases.
+\item Add an MST prelude suite that reifies the FOL objects used by those
+developments and proves the core schematic lemma terms before the algorithm
+layer consumes them.
 \end{enumerate}
 
 \section{IF-Normalization Dialogue Example}
@@ -1497,6 +2139,12 @@ apply_patch
 
 ./snark --noinform --disable-debugger \
   --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-fol-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-fol-synthesis-examples))' \
+  --eval '(sb-ext:quit)'
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
   --eval '(load "examples/synthesis/new-mst-synthesis.lisp")' \
   --eval '(format t "~S~%" (new-mst-synthesis-examples))' \
   --eval '(format t "~S~%" (new-run-mst-demo))' \
@@ -1548,6 +2196,168 @@ Finally, the document build was rerun:
 latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
 rg -n "undefined|Undefined|Citation .* undefined|LaTeX Error|Emergency stop|Fatal error|Overfull" \
   docs/synthesis/mw-snark-synthesis.log
+\end{lstlisting}
+
+\section{Strict MST FOL Layer Dialogue and Scripts}
+
+This appendix records the public interaction for the strict MST FOL layer.
+
+\subsection{Prompt}
+
+\begin{lstlisting}
+Let's finish the fianl layer of the non-probabilistic MST pipeline. Replace the named MST obligations with FOL developments for finite sets/lists, paths, cuts, components, acyclicity, finite weight comparison, exchange, blue rule, red rule, batch safety, and then derive Kruskal/Prim/Boruvka as consequences of those lemmas.
+\end{lstlisting}
+
+\subsection{Public Codex Interactions}
+
+\begin{lstlisting}
+I'll turn this into another concrete implementation pass rather than just tightening prose: add the lower FOL layer, thread the derived obligations through the MST prelude/algorithms, update the catalogue, and rerun the SNARK/PDF checks.
+
+The existing prelude has the right top-level lemmas, but the premise layer is still too chunky. I'm going to add a new bottom layer that uses finite-list/set/path/cut/weight certificate relations and then have the non-probabilistic algorithm derivations consume those lower-level derived facts rather than the old named obligations.
+
+The strict layer is in place now as a new file. I'm going to run it directly before wiring it into the image, because fresh SNARK declarations tend to catch arity/name mistakes immediately.
+\end{lstlisting}
+
+\subsection{Scripts and Outputs}
+
+\begin{lstlisting}
+apply_patch
+# Added examples/synthesis/new-mst-fol-synthesis.lisp.
+# Updated snark-system.lisp, snark-examples.asd, README, and this TeX file.
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-fol-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-fol-synthesis-examples))' \
+  --eval '(sb-ext:quit)'
+\end{lstlisting}
+The extracted answers include:
+\begin{lstlisting}
+(EXCHANGE-FROM-PATH-CUT-WEIGHT
+  (VALUES (MSTF-EXCHANGE TREE OLD EDGE)))
+
+(BLUE-RULE-FROM-EXCHANGE
+  (VALUES
+    (MSTF-EXCHANGE TREE (MSTF-CROSSING-EDGE PATH CUT) EDGE)))
+
+(KRUSKAL-FROM-BLUE-RULE
+  (VALUES (MSTF-KRUSKAL-STEP G (MSTF-ADD-EDGE EDGE FOREST))))
+
+(PRIM-FROM-BLUE-RULE
+  (VALUES (MSTF-PRIM-STEP G (MSTF-ADD-EDGE EDGE FOREST) ROOT)))
+
+(BORUVKA-FROM-BATCH-SAFETY
+  (VALUES (MSTF-BORUVKA-PHASE G (MSTF-CONTRACT-SET G BATCH))))
+\end{lstlisting}
+
+\section{MST Prelude Dialogue and Scripts}
+
+This appendix section records the public interaction for the no-shortcut MST
+prelude pass.
+
+\subsection{Prompt}
+
+\begin{lstlisting}
+Yes, reify these via an MST prelude development. Get the appropriate FOL objects/concepts, the corresponding lemmas (and their corresponding answer extraction/program terms), and then the algorithms.
+\end{lstlisting}
+
+\subsection{Public Codex Interactions}
+
+\begin{lstlisting}
+That changes the standard from "refinement catalogue" to "formal development." Pure FOL can do this only if we reify paths, finite sets, sums/orders, samples, heaps, and schedules as first-order objects.
+
+The current files still use the shortcuts you're objecting to: predicates like NEW-HEAVIEST-ON-CYCLE, NEW-SAFE-EDGE, NEW-F-HEAVY-FILTERED, NEW-CORRUPTION-REPAIR-VALID, and NEW-GRAPHIC-MATROID-OF are being asserted as premises.
+
+I'm going to add this as a new new-mst-prelude-synthesis.lisp rather than burying it in the existing advanced file. That gives us a clean line: old advanced file is the scaffold; the prelude file is where the first-principles FOL objects and derived lemmas live.
+
+The first prelude smoke run hit a search blow-up around the quantified blue-rule imports. I stopped the stuck image and tightened the prelude into the same schematic style SNARK's existing synthesis examples use.
+\end{lstlisting}
+
+\subsection{Scripts and Outputs}
+
+\begin{lstlisting}
+rg -n "new-(safe|useless|heaviest|lightest|spanning|minimum|components|each|path|max|replacement|sample|f-heavy|soft|corruption|matroid|graphic|update|ghs|fragments|tree-spans|tree-acyclic)" \
+  examples/synthesis/new-mst-synthesis.lisp \
+  examples/synthesis/new-mst-advanced-synthesis.lisp
+
+apply_patch
+# Added examples/synthesis/new-mst-prelude-synthesis.lisp.
+# Updated snark-system.lisp, snark-examples.asd, README, and this TeX file.
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-prelude-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-prelude-synthesis-examples))' \
+  --eval '(sb-ext:quit)'
+\end{lstlisting}
+The resulting prelude answers include:
+\begin{lstlisting}
+(BLUE-RULE-LEMMA
+  (VALUES
+    (MSTP-EXCHANGE TREE (MSTP-CROSSING-EDGE PATH CUT) EDGE)))
+
+(RED-RULE-LEMMA
+  (VALUES (MSTP-DELETE-EDGE EDGE G)))
+
+(KKT-FILTER-LEMMA
+  (VALUES (MSTP-KKT FILTERED RANDOM-SOURCE)))
+
+(KRUSKAL-ALGORITHM
+  (VALUES (MSTP-KRUSKAL-STEP G (MSTP-ADD-EDGE EDGE FOREST))))
+\end{lstlisting}
+
+\section{Advanced MST Dialogue and Scripts}
+
+This appendix section records the public interaction for the advanced MST
+development.
+
+\subsection{Prompt}
+
+\begin{lstlisting}
+Ok, yes -- let's do all of these developments. Please implement these, show their SNARK derivation/answer extractions, and catalogue all of these variants.
+\end{lstlisting}
+
+\subsection{Public Codex Interactions}
+
+\begin{lstlisting}
+I'll treat this as a full extension pass: add a new advanced MST synthesis file, wire it into the image/loaders, add runnable finite-graph interpretations where sensible, and expand the LNCS catalogue/writeup with each SNARK input and extracted answer.
+
+The new file will sit beside the base MST development and reuse its finite graph representation. It adds blue/red rules, contraction/deletion, algorithm-family refinements, verification, replacement edges, KKT/filtering, soft-heap abstraction, matroid greedy, and dynamic/distributed hooks.
+
+The advanced proof suite and finite demo now both run from a loaded file. Next I'm wiring it into the normal SNARK image and README so it behaves like the existing synthesis examples instead of living off to the side.
+\end{lstlisting}
+
+\subsection{Scripts and Outputs}
+
+\begin{lstlisting}
+sed -n '1,520p' examples/synthesis/new-mst-synthesis.lisp
+sed -n '1,170p' examples/synthesis/README
+
+apply_patch
+# Added examples/synthesis/new-mst-advanced-synthesis.lisp.
+# Updated snark-system.lisp, snark-examples.asd, README, and this TeX file.
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-advanced-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-advanced-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-advanced-demo))' \
+  --eval '(sb-ext:quit)'
+\end{lstlisting}
+The first smoke test exposed one public implementation correction: a local Lisp
+helper was named \texttt{SEARCH}, shadowing the locked Common Lisp symbol.
+Renaming the helper to \texttt{WALK} fixed the executable demonstration.
+
+\begin{lstlisting}
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-mst-advanced-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-advanced-demo))' \
+  --eval '(sb-ext:quit)'
+
+latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
 \end{lstlisting}
 
 \section{Representative Agent Commands}
@@ -1645,6 +2455,21 @@ apply_patch
   --eval '(format t "~S~%" (new-run-mst-demo))' \
   --eval '(sb-ext:quit)'
 
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-advanced-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-advanced-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-advanced-demo))' \
+  --eval '(sb-ext:quit)'
+
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-mst-advanced-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-advanced-demo))' \
+  --eval '(sb-ext:quit)'
+
 kpsewhich llncs.cls
 command -v latexmk
 command -v pdflatex
@@ -1727,6 +2552,44 @@ examples.
         (MW-REMAINDER-OF (MW-QR (MW-MINUS N D) D)))))))
 \end{lstlisting}
 
+\subsection{Strict MST FOL Layer}
+
+\begin{lstlisting}
+(FINITE-LIST-MEMBERSHIP
+  (VALUES EDGE))
+
+(INPUT-EDGE-FROM-FINITE-LIST
+  (VALUES EDGE))
+
+(PATH-FROM-FINITE-LIST
+  (VALUES PATH))
+
+(LIGHTEST-CROSSING-FROM-FINITE-COMPARISONS
+  (VALUES EDGE))
+
+(SPANNING-TREE-FROM-CERTIFICATES
+  (VALUES TREE))
+
+(EXCHANGE-FROM-PATH-CUT-WEIGHT
+  (VALUES (MSTF-EXCHANGE TREE OLD EDGE)))
+
+(BLUE-RULE-FROM-EXCHANGE
+  (VALUES
+    (MSTF-EXCHANGE TREE (MSTF-CROSSING-EDGE PATH CUT) EDGE)))
+
+(RED-RULE-FROM-CYCLE
+  (VALUES (MSTF-DELETE-EDGE EDGE G)))
+
+(KRUSKAL-FROM-BLUE-RULE
+  (VALUES (MSTF-KRUSKAL-STEP G (MSTF-ADD-EDGE EDGE FOREST))))
+
+(PRIM-FROM-BLUE-RULE
+  (VALUES (MSTF-PRIM-STEP G (MSTF-ADD-EDGE EDGE FOREST) ROOT)))
+
+(BORUVKA-FROM-BATCH-SAFETY
+  (VALUES (MSTF-BORUVKA-PHASE G (MSTF-CONTRACT-SET G BATCH))))
+\end{lstlisting}
+
 \section{Executable Demo Output}
 
 Loading the synthesis example files and running the executable demo functions
@@ -1757,6 +2620,38 @@ produced:
  :PRIM (:EDGES (AC BC BD DE EF) :WEIGHT 9)
  :BORUVKA (:EDGES (EF DE BC AC BD) :WEIGHT 9)
  :WEIGHTS-AGREE T)
+
+(:REVERSE-DELETE (:EDGES (AC BC BD DE EF) :WEIGHT 9)
+ :BORUVKA-PHASES
+  (:PHASES ((EF DE BC AC) (BD)) :EDGES (EF DE BC AC BD)
+   :WEIGHT 9)
+ :VERIFICATION (:TREE-P T :PATH-MAX-CONDITION T :MST-P T)
+ :SECOND-BEST
+  (:TREE-EDGE AC :REPLACEMENT AB :DELTA 1
+   :SECOND-BEST-WEIGHT 10)
+ :KRUSKAL-VARIANTS
+  ((:POLICY :SORTED-SCAN :WEIGHT 9)
+   (:POLICY :UNION-FIND :WEIGHT 9)
+   (:POLICY :FILTER-KRUSKAL :FILTER (DF CE) :WEIGHT 9))
+ :PRIM-VARIANTS
+  ((:POLICY :DENSE :QUEUE :ARRAY-SCAN :WEIGHT 9)
+   (:POLICY :BINARY-HEAP :QUEUE :BINARY-HEAP :WEIGHT 9)
+   (:POLICY :FIBONACCI-HEAP :QUEUE :FIBONACCI-HEAP :WEIGHT 9)
+   (:POLICY :PAIRING-HEAP :QUEUE :PAIRING-HEAP :WEIGHT 9))
+ :KKT-FILTER
+  (:SAMPLE (AB BC CD DE EF) :FILTERED-OUT (DF CE)
+   :EDGES (BC DE BD EF AC) :WEIGHT 9)
+ :SOFT-HEAP
+  (:CANDIDATE-FILTER (DF CE) :REPAIR :VERIFY-AFTER-CORRUPTION
+   :WEIGHT 9)
+ :MATROID-GREEDY (:MATROID :GRAPHIC :WEIGHT 9)
+ :DYNAMIC
+  ((:UPDATE (AB 1) :WEIGHT 7)
+   (:UPDATE (DF 2) :WEIGHT 7))
+ :GHS
+  (:MESSAGE-RULE :MINIMUM-OUTGOING-EDGE
+   :FRAGMENT-PHASES ((EF DE BC AC) (BD))
+   :WEIGHT 9))
 \end{lstlisting}
 This output is intentionally different in kind from the extracted answers above:
 it is the result of executing concrete Lisp functions that interpret the
@@ -1834,6 +2729,67 @@ Boruvka, O.:
 O jistem problemu minimalnim.
 Prace moravske prirodovedecke spolecnosti 3, 37--58 (1926).
 \url{https://xlinux.nist.gov/dads/HTML/boruvkasAlgorithm.html}
+
+\bibitem{CheritonTarjan1976}
+Cheriton, D., Tarjan, R.E.:
+Finding minimum spanning trees.
+SIAM Journal on Computing 5(4), 724--742 (1976).
+\url{https://epubs.siam.org/doi/10.1137/0205051}
+
+\bibitem{FredmanTarjan1987}
+Fredman, M.L., Tarjan, R.E.:
+Fibonacci heaps and their uses in improved network optimization algorithms.
+Journal of the ACM 34(3), 596--615 (1987).
+\url{https://doi.org/10.1145/28869.28874}
+
+\bibitem{DixonRauchTarjan1992}
+Dixon, B., Rauch, M., Tarjan, R.E.:
+Verification and sensitivity analysis of minimum spanning trees in linear time.
+SIAM Journal on Computing 21(6), 1184--1192 (1992).
+\url{https://doi.org/10.1137/0221070}
+
+\bibitem{KargerKleinTarjan1995}
+Karger, D.R., Klein, P.N., Tarjan, R.E.:
+A randomized linear-time algorithm to find minimum spanning trees.
+Journal of the ACM 42(2), 321--328 (1995).
+\url{https://doi.org/10.1145/201019.201022}
+
+\bibitem{Chazelle2000}
+Chazelle, B.:
+A minimum spanning tree algorithm with inverse-Ackermann type complexity.
+Journal of the ACM 47(6), 1028--1047 (2000).
+\url{https://doi.org/10.1145/355541.355562}
+
+\bibitem{PettieRamachandran2002}
+Pettie, S., Ramachandran, V.:
+An optimal minimum spanning tree algorithm.
+Journal of the ACM 49(1), 16--34 (2002).
+\url{https://doi.org/10.1145/505241.505243}
+
+\bibitem{Eppstein1994}
+Eppstein, D.:
+Offline algorithms for dynamic minimum spanning tree problems.
+Journal of Algorithms 17(2), 237--250 (1994).
+\url{https://doi.org/10.1006/jagm.1994.1033}
+
+\bibitem{GallagerHumbletSpira1983}
+Gallager, R.G., Humblet, P.A., Spira, P.M.:
+A distributed algorithm for minimum-weight spanning trees.
+ACM Transactions on Programming Languages and Systems 5(1), 66--77 (1983).
+\url{https://dblp.uni-trier.de/rec/journals/toplas/GallagerHS83.html}
+
+\bibitem{OsipovSandersSingler2009}
+Osipov, V., Sanders, P., Singler, J.:
+The Filter-Kruskal minimum spanning tree algorithm.
+Proceedings of the 11th Workshop on Algorithm Engineering and Experiments,
+52--61 (2009).
+\url{https://publikationen.bibliothek.kit.edu/1000025373}
+
+\bibitem{Edmonds1971}
+Edmonds, J.:
+Matroids and the greedy algorithm.
+Mathematical Programming 1, 127--136 (1971).
+\url{https://doi.org/10.1007/BF01584082}
 
 \bibitem{SnarkGuide}
 Stickel, M., Waldinger, R., Chaudhri, V.:

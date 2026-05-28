@@ -109,7 +109,10 @@
     ("examples" "latin-squares")
     ("examples" "synthesis" "synthesis-examples")
     ("examples" "synthesis" "new-synthesis-examples")
+    ("examples" "synthesis" "new-mst-fol-synthesis")
+    ("examples" "synthesis" "new-mst-prelude-synthesis")
     ("examples" "synthesis" "new-mst-synthesis")
+    ("examples" "synthesis" "new-mst-advanced-synthesis")
     "patches"
     ))
 

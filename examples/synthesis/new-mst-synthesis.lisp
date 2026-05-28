@@ -8,6 +8,8 @@
 ;;; batches, and strategies are first-order objects in the SNARK layer.  The
 ;;; executable layer interprets the extracted refinement shapes over finite
 ;;; Common Lisp graphs and supplies Kruskal, Prim/Jarnik, and Boruvka runners.
+;;; The lower finite-certificate proofs for the ordinary non-probabilistic
+;;; MST spine are in new-mst-fol-synthesis.lisp.
 
 (in-package :snark-user)
 

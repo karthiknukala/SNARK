@@ -109,6 +109,7 @@
     ("examples" "latin-squares")
     ("examples" "synthesis" "synthesis-examples")
     ("examples" "synthesis" "new-synthesis-examples")
+    ("examples" "synthesis" "new-mst-synthesis")
     "patches"
     ))
 

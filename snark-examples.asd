@@ -18,4 +18,5 @@
                (:file "latin-squares")
                (:module "synthesis"
                 :components ((:file "synthesis-examples")
-                             (:file "new-synthesis-examples")))))
+                             (:file "new-synthesis-examples")
+                             (:file "new-mst-synthesis")))))

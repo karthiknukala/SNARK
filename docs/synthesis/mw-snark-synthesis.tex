@@ -36,7 +36,10 @@ square-root approximation problem, subtractive greatest-common-divisor
 computation, and quotient/remainder computation by recursive subtraction.  The
 development also adds three further stress tests: stable merge, stable
 partition, and a Boyer--Moore-style simplifier for normal-form IF-expressions
-\cite{BoyerMoore1979}.  It is not a verbatim
+\cite{BoyerMoore1979}.  A separate MST development treats the classical
+Kruskal, Jarnik--Prim, and Boruvka algorithms
+\cite{Kruskal1956,Jarnik1930,Prim1957,Boruvka1926} as logical refinements of
+a shared safe-extension skeleton.  It is not a verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
 extract program terms from proofs.  It also includes executable Lisp
@@ -96,6 +99,16 @@ same answer-extraction interface:
 It also includes executable interpretations:
 \begin{lstlisting}
 (new-executable-synthesis-demos)
+\end{lstlisting}
+
+A third file, \texttt{new-mst-synthesis.lisp}, develops minimum-spanning-tree
+algorithms as a refinement hierarchy:
+\begin{lstlisting}
+(new-mst-synthesis-examples)
+(new-run-mst graph :strategy :kruskal)
+(new-run-mst graph :strategy :prim)
+(new-run-mst graph :strategy :boruvka)
+(new-run-mst-demo)
 \end{lstlisting}
 
 \section{Answer Extraction in the Development}
@@ -600,6 +613,206 @@ Answer:
             (NEW-EXTEND-FALSE (NEW-CONDITION EXPR) ENV)))))))
 \end{lstlisting}
 
+\subsection{New MST: Abstract Specification}
+
+The MST development reifies sets, cuts, forests, batches, and strategies as
+first-order objects.  The second-order comparison against every candidate tree
+is represented by first-order predicates over tree objects, including
+\texttt{NEW-SPANNING-TREE} and \texttt{NEW-MINIMUM-TOTAL-WEIGHT}.  At the top
+level:
+\[
+  \mathrm{MST}(G,T) \equiv
+  \mathrm{SpanningTree}(G,T)\land \mathrm{MinimumTotalWeight}(G,T).
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(new-spanning-tree g tree)
+        :name 'new-mst-spanning-tree-premise)
+(assert '(new-minimum-total-weight g tree)
+        :name 'new-mst-minimality-premise)
+(assert '(implies
+          (and (new-spanning-tree g tree)
+               (new-minimum-total-weight g tree))
+          (new-mst-out g tree tree))
+        :name 'new-mst-specification)
+(prove '(new-mst-out g tree ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES TREE)
+\end{lstlisting}
+
+\subsection{New MST: Abstract Greedy Skeleton}
+
+The first algorithmic refinement is deliberately not Kruskal, Prim, or Boruvka.
+It states only the shared greedy invariant:
+\begin{align*}
+  \mathrm{complete}(G,F) &\Rightarrow A=F,\\
+  \neg\mathrm{complete}(G,F) &\Rightarrow
+    A=\mathrm{Greedy}(G,\mathrm{Extend}(G,F)).
+\end{align*}
+SNARK input:
+\begin{lstlisting}
+(assert '(implies
+          (new-mst-complete g forest)
+          (new-mst-greedy-out g forest forest))
+        :name 'new-mst-greedy-finished)
+(assert '(implies
+          (not (new-mst-complete g forest))
+          (new-mst-greedy-out
+           g
+           forest
+           (new-mst-greedy g (new-mst-extend g forest))))
+        :name 'new-mst-greedy-continues)
+(prove '(new-mst-greedy-out g forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-MST-COMPLETE G FOREST)
+  (VALUES FOREST)
+  (VALUES (NEW-MST-GREEDY G (NEW-MST-EXTEND G FOREST))))
+\end{lstlisting}
+
+\subsection{New MST: Safe Extension}
+
+The next refinement exposes the safe-extension point.  A Boruvka-style batch of
+safe edges may be added at once; otherwise the refinement adds one safe edge:
+\[
+  \mathrm{SafeBatch}(G,F,B)\Rightarrow A=F+B,\qquad
+  \mathrm{SafeEdge}(G,F,e)\Rightarrow A=F+e.
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(or (new-safe-batch g forest batch)
+             (new-safe-edge g forest edge))
+        :name 'new-mst-extension-kind)
+(assert '(implies
+          (new-safe-batch g forest batch)
+          (new-mst-extension-out
+           g
+           forest
+           (new-mst-add-batch batch forest)))
+        :name 'new-mst-safe-batch-extension)
+(assert '(implies
+          (and (not (new-safe-batch g forest batch))
+               (new-safe-edge g forest edge))
+          (new-mst-extension-out
+           g
+           forest
+           (new-mst-add-edge edge forest)))
+        :name 'new-mst-safe-edge-extension)
+(prove '(new-mst-extension-out g forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(ANSWER-IF (NEW-SAFE-EDGE G FOREST EDGE)
+  (ANSWER-IF (NEW-SAFE-BATCH G FOREST BATCH)
+    (VALUES (NEW-MST-ADD-BATCH BATCH FOREST))
+    (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+  (VALUES (NEW-MST-ADD-BATCH BATCH FOREST)))
+\end{lstlisting}
+
+\subsection{New MST: Cut Property}
+
+The cut-property refinement says that a lightest edge crossing a cut respected
+by the current forest is a safe single-edge extension:
+\[
+  \mathrm{RespectedCut}(G,F,C)\land
+  \mathrm{Crosses}(e,C)\land
+  \mathrm{LightestCrossing}(G,e,C)
+  \Rightarrow A=F+e.
+\]
+SNARK input:
+\begin{lstlisting}
+(assert '(new-cut-respected g forest cut)
+        :name 'new-mst-cut-respected-premise)
+(assert '(new-crosses-cut edge cut)
+        :name 'new-mst-cut-crossing-premise)
+(assert '(new-lightest-crossing g edge cut)
+        :name 'new-mst-cut-lightest-premise)
+(assert '(implies
+          (and (new-cut-respected g forest cut)
+               (new-crosses-cut edge cut)
+               (new-lightest-crossing g edge cut))
+          (new-mst-extension-out
+           g
+           forest
+           (new-mst-add-edge edge forest)))
+        :name 'new-mst-cut-property-extension)
+(prove '(new-mst-extension-out g forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+Answer:
+\begin{lstlisting}
+(VALUES (NEW-MST-ADD-EDGE EDGE FOREST))
+\end{lstlisting}
+
+\subsection{New MST: Kruskal, Prim, and Boruvka}
+
+Kruskal, Prim/Jarnik, and Boruvka are encoded as specializations of the same
+safe-extension relation:
+\begin{align*}
+  \mathrm{KruskalEligible}(G,F,e)\land\mathrm{KruskalLightest}(G,F,e)
+    &\Rightarrow A=F+e,\\
+  \mathrm{PrimFrontier}(G,F,r,e)\land\mathrm{PrimLightest}(G,F,r,e)
+    &\Rightarrow A=F+e,\\
+  \mathrm{BoruvkaBatch}(G,F,B)
+    &\Rightarrow A=F+B.
+\end{align*}
+Representative SNARK input for the Kruskal refinement:
+\begin{lstlisting}
+(assert '(new-kruskal-eligible g forest edge)
+        :name 'new-mst-kruskal-eligible-premise)
+(assert '(new-kruskal-lightest g forest edge)
+        :name 'new-mst-kruskal-lightest-premise)
+(assert '(implies
+          (and (new-kruskal-eligible g forest edge)
+               (new-kruskal-lightest g forest edge))
+          (new-mst-extension-out
+           g
+           forest
+           (new-mst-add-edge edge forest)))
+        :name 'new-mst-kruskal-extension)
+(prove '(new-mst-extension-out g forest ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+The extracted answers for the three refinements are:
+\begin{lstlisting}
+(KRUSKAL-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+
+(PRIM-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+
+(BORUVKA-REFINEMENT
+  (VALUES (NEW-MST-ADD-BATCH BATCH FOREST)))
+\end{lstlisting}
+
+\subsection{New MST: Strategy Dispatch and Executable Leaves}
+
+The final symbolic layer dispatches among the concrete refinements:
+\begin{lstlisting}
+(assert '(or (new-strategy-kruskal strategy)
+             (new-strategy-prim strategy)
+             (new-strategy-boruvka strategy))
+        :name 'new-mst-strategy-cases)
+(prove '(new-mst-strategy-out g forest strategy ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+The resulting proof answer is a nested \texttt{ANSWER-IF} over the strategy
+predicates.  SNARK does not simplify all impossible combinations away in the
+answer term; the executable layer supplies the concrete dispatch:
+\begin{lstlisting}
+(new-run-mst graph :strategy :kruskal)
+(new-run-mst graph :strategy :prim)
+(new-run-mst graph :strategy :boruvka)
+\end{lstlisting}
+On the sample finite graph, all three concrete interpretations return total
+weight \(9\), though the edge order and tie choices differ.
+
 \section{Working Example I: Unification}
 
 Manna and Waldinger's unification paper specifies unification as the task of
@@ -782,6 +995,135 @@ Here again the proof term is not yet host-language code.  It names a recursive
 call \texttt{MW-QR}, projections from its pair result, and arithmetic
 operations that must be interpreted before the program can be run.
 
+\section{Working Example V: MST Refinement Ladder}
+
+The minimum-spanning-tree development is the most substantial new example in
+the suite.  Unlike the small branch-extraction examples, it is organized as a
+hierarchy of specifications and refinements.  The point is not to choose
+Kruskal, Jarnik--Prim, or Boruvka
+\cite{Kruskal1956,Jarnik1930,Prim1957,Boruvka1926} at the top.  Instead, the
+development first states what an MST witness is, then introduces a generic
+greedy extension operator, then refines that extension through the cut
+property, and only at the leaves commits to the familiar algorithm families.
+
+\subsection{Reifying the Specification}
+
+The mathematical specification supplied by the user has the right high-level
+shape:
+\[
+  \mathrm{MST}(G,T) \equiv
+  \mathrm{SpanningTree}(G,T)\land
+  \mathrm{MinimumWeight}(G,T).
+\]
+Here the minimum-weight clause abbreviates:
+\[
+  \mathrm{MinimumWeight}(G,T) \equiv
+  \forall S.\,(\mathrm{SpanningTree}(G,S)\Rightarrow
+  \mathrm{WeightLeq}(T,S)).
+\]
+To keep the SNARK development first-order, candidate trees, cuts, forests,
+batches, and strategies are treated as first-order objects.  Thus the
+second-order quantification over edge predicates is represented by predicates
+over reified objects:
+\begin{lstlisting}
+NEW-SPANNING-TREE(G,T)
+NEW-MINIMUM-TOTAL-WEIGHT(G,T)
+NEW-CUT-RESPECTED(G,F,CUT)
+NEW-SAFE-EDGE(G,F,E)
+NEW-SAFE-BATCH(G,F,BATCH)
+\end{lstlisting}
+Reachability and weight comparison remain auxiliary predicates, just as in the
+input specification.  This keeps the logical surface close to the mathematical
+contract while making each refinement clause a first-order SNARK formula.
+
+\subsection{The Abstract Greedy Program}
+
+The first executable-looking answer is not any named MST algorithm.  It is the
+shared greedy recurrence:
+\[
+  F\ \hbox{complete} \Rightarrow F,\qquad
+  F\ \hbox{incomplete} \Rightarrow
+  \mathrm{Greedy}(G,\mathrm{Extend}(G,F)).
+\]
+The extracted answer is therefore a program context with a single open
+operation, \texttt{NEW-MST-EXTEND}.  That operation is where the later
+refinements plug in:
+\begin{lstlisting}
+(ANSWER-IF (NEW-MST-COMPLETE G FOREST)
+  (VALUES FOREST)
+  (VALUES (NEW-MST-GREEDY G (NEW-MST-EXTEND G FOREST))))
+\end{lstlisting}
+This is the key abstraction boundary.  The proof term has committed to an
+iterative greedy construction, but not to the policy used to find the next safe
+extension.
+
+\subsection{Safe Extensions and the Cut Property}
+
+The next layer splits extension into two cases: add one safe edge, or add a
+safe batch.  This is the point at which Kruskal and Prim/Jarnik can share one
+single-edge interface while Boruvka can use a batch interface:
+\begin{lstlisting}
+(ANSWER-IF (NEW-SAFE-EDGE G FOREST EDGE)
+  (ANSWER-IF (NEW-SAFE-BATCH G FOREST BATCH)
+    (VALUES (NEW-MST-ADD-BATCH BATCH FOREST))
+    (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+  (VALUES (NEW-MST-ADD-BATCH BATCH FOREST)))
+\end{lstlisting}
+The cut-property refinement then justifies a safe single-edge extension:
+\[
+  \mathrm{CutRespected}(G,F,C)\land
+  \mathrm{Crosses}(e,C)\land
+  \mathrm{LightestCrossing}(G,e,C)
+  \Rightarrow F+e.
+\]
+SNARK extracts:
+\begin{lstlisting}
+(VALUES (NEW-MST-ADD-EDGE EDGE FOREST))
+\end{lstlisting}
+This is the logical hinge: once an algorithm can be shown to choose an edge or
+batch satisfying the relevant cut/safety predicate, it inherits the same
+extension shape.
+
+\subsection{Algorithm Families as Refinements}
+
+The named algorithms enter only after the shared proof obligations are in
+place:
+\begin{itemize}
+\item Kruskal refines extension by choosing a lightest edge that connects two
+different forest components.
+\item Jarnik--Prim refines extension by choosing a lightest edge on the
+frontier of one growing component.
+\item Boruvka refines extension by choosing a batch of lightest outgoing edges,
+one per current component.
+\end{itemize}
+The extracted answers make their common structure explicit:
+\begin{lstlisting}
+(KRUSKAL-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+(PRIM-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+(BORUVKA-REFINEMENT
+  (VALUES (NEW-MST-ADD-BATCH BATCH FOREST)))
+\end{lstlisting}
+Kruskal and Prim/Jarnik differ in the predicate used to produce \texttt{EDGE};
+Boruvka differs in producing \texttt{BATCH}.  The answer terms expose exactly
+that difference and no more.
+
+\subsection{Concrete Implementations}
+
+The executable layer interprets the symbolic leaves over finite Lisp graphs.
+Edges are records \((id,u,v,w)\), forests are maintained with a union-find
+structure, and the three strategies share the same output contract:
+\begin{lstlisting}
+(new-run-mst graph :strategy :kruskal)
+(new-run-mst graph :strategy :prim)
+(new-run-mst graph :strategy :boruvka)
+\end{lstlisting}
+On the demo graph, all three implementations return spanning forests of total
+weight \(9\).  Their edge orders differ because the concrete algorithms expose
+different traversal and tie-breaking choices, but they instantiate the same
+abstract refinement chain.
+
 \section{Limitations}
 
 These examples are deliberately small.  They are working SNARK demonstrations
@@ -794,6 +1136,8 @@ complete theory of real numbers;
 comparison and subtraction predicates in the proof layer;
 \item the new stable-merge, stable-partition, and IF-expression examples use
 abstract list and IF-expression theories;
+\item the MST development reifies reachability, cuts, candidate trees, and
+weight comparison as first-order predicates over finite graph objects;
 \item the unification examples isolate key branches rather than proving a
 single global total-correctness theorem for all expression pairs;
 \item induction and termination arguments are represented by recursive
@@ -815,6 +1159,7 @@ Then run:
 \begin{lstlisting}
 (mw-synthesis-examples)
 (new-synthesis-examples)
+(new-mst-synthesis-examples)
 \end{lstlisting}
 The result is a list pairing each example name with its extracted answer term.
 
@@ -829,9 +1174,10 @@ quotient/remainder answers contain \texttt{MW-GT}, \texttt{MW-LT},
 \texttt{MW-MINUS}, \texttt{MW-GCD}, \texttt{MW-QR}, and pair projection
 symbols.  The new examples similarly contain abstract list constructors,
 IF-expression accessors, path-assumption predicates, and recursive
-simplification calls.  SNARK has proved that a witness with this shape exists
-under the stated obligations; it has not, by itself, supplied concrete Common
-Lisp definitions for those abstract symbols.
+simplification calls.  The MST proof answers contain abstract spanning-tree,
+safe-edge, cut, batch, and strategy predicates.  SNARK has proved that a
+witness with this shape exists under the stated obligations; it has not, by
+itself, supplied concrete Common Lisp definitions for those abstract symbols.
 
 The distribution therefore includes explicit executable interpretations.  For
 square root, the recursive skeleton becomes:
@@ -879,6 +1225,7 @@ The following command runs all executable demonstrations:
 \begin{lstlisting}
 (mw-executable-synthesis-demos)
 (new-executable-synthesis-demos)
+(new-run-mst-demo)
 \end{lstlisting}
 This split is deliberate: the proof answers document the synthesized control
 structure; the \texttt{MW-RUN-*} and \texttt{NEW-RUN-*} layers supply the
@@ -942,6 +1289,12 @@ The addition simplification and shortest-path relaxation are kind of lame. Remov
 
 IF-expressions can be defined by a datatype that has a constructor for IF-expressions with three accessors: condition, thenBranch, and elseBranch, and the truth values: True and False, and variables. An IF-expression is in normal form if the condition part of any IF-expression is always a variable, and there are no redundant IF-expressions of the form IF(x, A, A). Write a simplifier for normal-form IF-expressions so that no variable is repeated along any branch.
 \end{lstlisting}
+\item
+\begin{lstlisting}
+Under new examples, let's do a thorough MST development. I want to do an abstract --> concrete MST algorithm development that doesn't immediately fix Kruskal/Jarnik-Prim/Boruvka but structures them abstractly and as a chain of logical refinements.
+
+Please encode the algorithm abstractly and hierarchically frame the various algorithms as logical refinements, with the SNARK conditions/specifications and the subsequent answer extraction providing the refinements and their direct implementations.
+\end{lstlisting}
 \end{enumerate}
 
 \subsection{Research Queries and Sources Consulted}
@@ -993,6 +1346,10 @@ a Boyer--Moore IF-expression simplifier.
 mathematical specification, SNARK prover input, and extracted answer.
 \item Replace the weaker addition and shortest-path examples with the
 normal-form IF-expression simplifier and rebuild the distribution.
+\item Add a separate MST refinement suite that starts from a reified
+first-order MST postcondition, refines through safe extensions and the cut
+property, and interprets Kruskal, Prim/Jarnik, and Boruvka as concrete
+strategy refinements.
 \end{enumerate}
 
 \section{IF-Normalization Dialogue Example}
@@ -1092,7 +1449,108 @@ pkill -f './snark --noinform --disable-debugger'
 latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
 \end{lstlisting}
 
-\subsection{Representative Agent Commands}
+\section{MST Refinement Dialogue and Scripts}
+
+This appendix section records the public interaction for the MST development.
+As above, it omits private chain-of-thought and records only prompts, public
+status/reasoning, scripts, and observed outputs.
+
+\subsection{Prompt}
+
+\begin{lstlisting}
+Under new examples, let's do a thorough MST development. I want to do an abstract --> concrete MST algorithm development that doesn't immediately fix Kruskal/Jarnik-Prim/Boruvka but structures them abstractly and as a chain of logical refinements.
+
+Please encode the algorithm abstractly and hierarchically frame the various algorithms as logical refinements, with the SNARK conditions/specifications and the subsequent answer extraction providing the refinements and their direct implementations.
+\end{lstlisting}
+The prompt then supplied a many-sorted relational MST specification with
+\texttt{Inc}, \texttt{InG}, \texttt{T}, \texttt{w}, reachability predicates,
+a reified competing selection \texttt{S}, \texttt{WeightLeq}, and an optional
+cut-property formulation.  The implementation keeps that intention but reifies
+trees, cuts, batches, forests, and strategies as first-order objects.
+
+\subsection{Public Codex Interactions}
+
+\begin{lstlisting}
+This is a bigger architectural pass, so I'll treat MST as its own new synthesis file and then thread it into the loader, examples README, and LNCS writeup.
+
+I'm going to keep the SNARK layer intentionally first-order by reifying trees, cuts, batches, forests, and strategies as objects, then use concrete Lisp runners for the executable side.
+
+The MST file is written with eight SNARK refinement examples and concrete finite-graph runners. I found two issues in the first smoke run: the single-premise refinements needed their premises asserted for answer extraction, and one cut predicate arity was inconsistent.
+
+The concrete runners agree on weight 9 across Kruskal, Prim, and Boruvka, which is exactly the executable sanity check I wanted before wiring it into the rebuilt image.
+
+The refinement proofs now all extract witnesses. The dispatcher still carries some impossible strategy combinations in the nested ANSWER-IF term, so the writeup calls out the distinction between SNARK's proof answer and the concrete dispatch layer.
+
+The rebuilt image now includes the MST suite directly, and I'm adding the larger theory section plus the reproducibility appendix entries to the LNCS document.
+\end{lstlisting}
+
+\subsection{Scripts and Outputs}
+
+\begin{lstlisting}
+sed -n '1,260p' examples/synthesis/new-synthesis-examples.lisp
+sed -n '1,220p' snark-system.lisp
+sed -n '1,120p' snark-examples.asd
+
+apply_patch
+# Added examples/synthesis/new-mst-synthesis.lisp.
+# Updated snark-system.lisp, snark-examples.asd, and examples/synthesis/README.
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-demo))' \
+  --eval '(sb-ext:quit)'
+\end{lstlisting}
+The initial script exposed two public corrections: \texttt{NEW-CROSSES-CUT}
+was declared with the wrong arity for the cut-property formula, and the
+single-branch refinements needed their premises asserted so that SNARK could
+derive a witness rather than returning no answer.
+
+\begin{lstlisting}
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-mst-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-demo))' \
+  --eval '(sb-ext:quit)'
+\end{lstlisting}
+The rebuilt image produced the following headline MST outputs:
+\begin{lstlisting}
+((ABSTRACT-SPECIFICATION (VALUES TREE))
+ (ABSTRACT-GREEDY-REFINEMENT
+  (ANSWER-IF (NEW-MST-COMPLETE G FOREST)
+    (VALUES FOREST)
+    (VALUES (NEW-MST-GREEDY G (NEW-MST-EXTEND G FOREST)))))
+ (SAFE-EXTENSION-REFINEMENT
+  (ANSWER-IF (NEW-SAFE-EDGE G FOREST EDGE)
+    (ANSWER-IF (NEW-SAFE-BATCH G FOREST BATCH)
+      (VALUES (NEW-MST-ADD-BATCH BATCH FOREST))
+      (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+    (VALUES (NEW-MST-ADD-BATCH BATCH FOREST))))
+ (CUT-PROPERTY-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+ (KRUSKAL-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+ (PRIM-REFINEMENT
+  (VALUES (NEW-MST-ADD-EDGE EDGE FOREST)))
+ (BORUVKA-REFINEMENT
+  (VALUES (NEW-MST-ADD-BATCH BATCH FOREST))))
+
+(:KRUSKAL (:EDGES (BC DE BD EF AC) :WEIGHT 9)
+ :PRIM (:EDGES (AC BC BD DE EF) :WEIGHT 9)
+ :BORUVKA (:EDGES (EF DE BC AC BD) :WEIGHT 9)
+ :WEIGHTS-AGREE T)
+\end{lstlisting}
+Finally, the document build was rerun:
+\begin{lstlisting}
+latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
+rg -n "undefined|Undefined|Citation .* undefined|LaTeX Error|Emergency stop|Fatal error|Overfull" \
+  docs/synthesis/mw-snark-synthesis.log
+\end{lstlisting}
+
+\section{Representative Agent Commands}
 
 \begin{lstlisting}
 ls
@@ -1170,6 +1628,21 @@ apply_patch
   --eval '(in-package :snark-user)' \
   --eval '(format t "~S~%" (new-synthesis-examples))' \
   --eval '(format t "~S~%" (new-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-mst-synthesis.lisp")' \
+  --eval '(format t "~S~%" (new-mst-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-demo))' \
+  --eval '(sb-ext:quit)'
+
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-mst-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-run-mst-demo))' \
   --eval '(sb-ext:quit)'
 
 kpsewhich llncs.cls
@@ -1279,6 +1752,11 @@ produced:
    :ANSWER (:KEPT (1 3 5 7) :DROPPED (2 4 6))))
  (IF-NORMAL-FORM-SIMPLIFIER
   (:ANSWER (NEW-IF (NEW-VAR Y) NEW-TRUE NEW-FALSE))))
+
+(:KRUSKAL (:EDGES (BC DE BD EF AC) :WEIGHT 9)
+ :PRIM (:EDGES (AC BC BD DE EF) :WEIGHT 9)
+ :BORUVKA (:EDGES (EF DE BC AC BD) :WEIGHT 9)
+ :WEIGHTS-AGREE T)
 \end{lstlisting}
 This output is intentionally different in kind from the extracted answers above:
 it is the result of executing concrete Lisp functions that interpret the
@@ -1332,6 +1810,30 @@ Manna, Z., Waldinger, R.:
 A deductive approach to program synthesis.
 ACM Transactions on Programming Languages and Systems 2(1), 90--121 (1980).
 \url{https://doi.org/10.1145/357084.357090}
+
+\bibitem{Kruskal1956}
+Kruskal, J.B.:
+On the shortest spanning subtree of a graph and the traveling salesman problem.
+Proceedings of the American Mathematical Society 7(1), 48--50 (1956).
+\url{https://cir.nii.ac.jp/crid/1363107368257159424}
+
+\bibitem{Jarnik1930}
+Jarnik, V.:
+O jistem problemu minimalnim. (Z dopisu panu O. Boruvkovi).
+Prace moravske prirodovedecke spolecnosti 6(4), 57--63 (1930).
+\url{https://www.dml.cz/handle/10338.dmlcz/500726}
+
+\bibitem{Prim1957}
+Prim, R.C.:
+Shortest connection networks and some generalizations.
+Bell System Technical Journal 36(6), 1389--1401 (1957).
+\url{https://www.nokia.com/bell-labs/publications-and-media/publications/shortest-connection-networks-and-some-generalizations/}
+
+\bibitem{Boruvka1926}
+Boruvka, O.:
+O jistem problemu minimalnim.
+Prace moravske prirodovedecke spolecnosti 3, 37--58 (1926).
+\url{https://xlinux.nist.gov/dads/HTML/boruvkasAlgorithm.html}
 
 \bibitem{SnarkGuide}
 Stickel, M., Waldinger, R., Chaudhri, V.:

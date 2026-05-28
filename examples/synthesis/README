@@ -67,3 +67,31 @@ These examples stress recursive calls under constructors, paired outputs,
 path-sensitive assumptions, and post-recursion redundancy checks.  That makes
 them good next steps beyond the Manna/Waldinger examples without requiring a
 full list or IF-expression theory inside SNARK.
+
+Hierarchical MST refinements
+============================
+
+The file new-mst-synthesis.lisp develops minimum-spanning-tree algorithms as a
+chain of logical refinements rather than as one fixed algorithm:
+
+  (new-mst-abstract-specification)
+  (new-mst-abstract-greedy-refinement)
+  (new-mst-safe-extension-refinement)
+  (new-mst-cut-property-refinement)
+  (new-mst-kruskal-refinement)
+  (new-mst-prim-refinement)
+  (new-mst-boruvka-refinement)
+  (new-mst-strategy-dispatch-refinement)
+  (new-mst-synthesis-examples)
+
+The executable interpretations are:
+
+  (new-run-mst graph :strategy :kruskal)
+  (new-run-mst graph :strategy :prim)
+  (new-run-mst graph :strategy :boruvka)
+  (new-run-mst-demo)
+
+The SNARK layer treats trees, forests, cuts, batches, and strategies as
+first-order objects.  The executable layer interprets the extracted leaves over
+finite Lisp graphs, showing Kruskal, Prim/Jarnik, and Boruvka as concrete
+implementations of the same safe-extension refinement.

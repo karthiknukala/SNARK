@@ -15,4 +15,6 @@
                (:file "reverse-example")
                (:file "hot-drink-example")
                (:file "coder-examples")
-               (:file "latin-squares")))
+               (:file "latin-squares")
+               (:module "synthesis"
+                :components ((:file "synthesis-examples")))))

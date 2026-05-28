@@ -1,0 +1,31 @@
+# SNARK/Common Lisp build artifacts
+*.fasl
+*.fas
+*.dfsl
+*.dx32fsl
+*.dx64fsl
+*.lx32fsl
+*.lx64fsl
+*.ufsl
+
+# Local saved images and build logs
+/snark
+/snark64
+/snark-ccl
+/snark-ccl64
+/compile.out
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Generated PDFs from the synthesis TeX document
+/docs/synthesis/*.pdf
+

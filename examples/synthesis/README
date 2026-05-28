@@ -1,0 +1,25 @@
+SNARK synthesis examples
+========================
+
+These examples recast two Manna/Waldinger deductive-program-synthesis
+examples in SNARK's answer-extraction style.
+
+They are not literal transcripts of the original deductive-tableau proofs.
+Instead, each function states the relevant specification/case obligations as
+SNARK formulas and asks SNARK to prove the existence of the desired output.  The
+answer attached to the refutation is the extracted program term.
+
+Load and run them from a SNARK image:
+
+  (load "examples/synthesis/synthesis-examples.lisp")
+  (mw-unification-variable-case)
+  (mw-unification-compound-case)
+  (mw-square-root-binary-search-step)
+  (mw-square-root-binary-search-program)
+  (mw-synthesis-examples)
+
+The square-root examples use abstract predicates such as MW-LE and
+MW-LARGE-TOLERANCE.  This keeps the example focused on answer extraction and
+the binary-search branching idea rather than on a full first-order development
+of real arithmetic.
+

@@ -1,0 +1,456 @@
+\documentclass[runningheads]{llncs}
+
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{url}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\title{Recasting Classical Deductive Program Synthesis Examples in SNARK}
+\titlerunning{Deductive Synthesis Examples in SNARK}
+
+\author{Codex}
+\authorrunning{Codex}
+\institute{SNARK workspace notes, \url{https://github.com/nilqed/SNARK}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+SNARK supports answer extraction from refutation proofs, a mechanism that
+connects automated theorem proving with deductive program synthesis.  This note
+documents a small extension of the local SNARK example suite under
+\texttt{examples/synthesis}.  The extension recasts two classical
+Manna--Waldinger developments as runnable SNARK examples: synthesis of the
+unification algorithm and emergence of the binary-search paradigm in the
+square-root approximation problem.  The development is not a verbatim
+reproduction of the original deductive-tableau proofs.  Instead, it isolates
+the central constructive obligations and uses SNARK's conditional answers to
+extract program terms from proofs.
+
+\keywords{SNARK \and Answer extraction \and Deductive synthesis \and
+Unification \and Binary search}
+\end{abstract}
+
+\section{Overview}
+
+Deductive program synthesis treats program construction as theorem proving.
+The desired program is specified by an existential theorem: for each admissible
+input there exists an output satisfying the specification.  A constructive
+proof of that theorem carries enough information to compute the output.  In
+SNARK, this information is represented by answers attached to rows.  When a
+proof closes, \texttt{(answer t)} can be read as the extracted witness term.
+
+The local development adds a new synthesis example file.  It contributes five
+entry points:
+\begin{lstlisting}
+(mw-unification-variable-case)
+(mw-unification-constant-case)
+(mw-unification-compound-case)
+(mw-square-root-binary-search-step)
+(mw-square-root-binary-search-program)
+\end{lstlisting}
+The aggregator \texttt{(mw-synthesis-examples)} runs all five and returns their
+extracted program terms.  The examples are also wired into
+\texttt{snark-system.lisp} and \texttt{snark-examples.asd}, so rebuilding SNARK
+compiles them with the rest of the example suite.
+
+\section{Answer Extraction in the Development}
+
+Each example follows the same pattern.  First, it initializes SNARK with
+resolution and conditional answer creation:
+\begin{lstlisting}
+(initialize)
+(use-resolution t)
+(use-conditional-answer-creation t)
+\end{lstlisting}
+Next, it declares an abstract object language of constructors, predicates, and
+program symbols.  The specification cases are asserted as implications.  The
+goal is then proved with an answer template:
+\begin{lstlisting}
+(prove '(some-output-relation input ?result)
+       :answer '(values ?result))
+\end{lstlisting}
+If two proof branches contribute different answers, SNARK combines them with
+\texttt{ANSWER-IF}.  This is the key mechanism used here to expose conditional
+branches in the synthesized program.
+
+\section{Working Example I: Unification}
+
+Manna and Waldinger's unification paper specifies unification as the task of
+finding a substitution that makes two expressions identical, or reporting
+failure when no such substitution exists \cite{MannaWaldinger1981}.  Later
+presentations emphasize the same existential-output view and its fit with
+SNARK-style proof search \cite{Waldinger2021}.  The local SNARK example uses a
+small first-order term language:
+\begin{lstlisting}
+mw-var, mw-const, mw-app        ; expression constructors
+mw-bind, mw-compose            ; substitution constructors
+mw-unify, mw-subst, mw-subst-of
+mw-none, mw-some               ; failure/success result constructors
+\end{lstlisting}
+
+\subsection{Variable Case}
+
+The variable case encodes the occurs check:
+\begin{align*}
+  \mathrm{occurs}(\mathrm{var}(v),t)
+    &\Rightarrow \mathrm{unify\_out}(\mathrm{var}(v),t,\mathrm{none}),\\
+  \neg\mathrm{occurs}(\mathrm{var}(v),t)
+    &\Rightarrow \mathrm{unify\_out}(\mathrm{var}(v),t,
+       \mathrm{some}(\mathrm{bind}(v,t))).
+\end{align*}
+The query asks SNARK to find a result:
+\begin{lstlisting}
+(prove '(mw-unify-out (mw-var v) term ?result)
+       :answer '(values ?result))
+\end{lstlisting}
+The extracted answer is:
+\begin{lstlisting}
+(ANSWER-IF (MW-OCCURS (MW-VAR V) TERM)
+  (VALUES MW-NONE)
+  (VALUES (MW-SOME (MW-BIND V TERM))))
+\end{lstlisting}
+This is the expected program fragment: fail if the occurs check fails;
+otherwise return the singleton binding.
+
+\subsection{Compound Case}
+
+For compound terms, the classical algorithm recursively unifies the first
+components, substitutes that result through the remaining components, then
+unifies the remaining components and composes substitutions.  The SNARK
+obligations encode three cases:
+\begin{enumerate}
+\item the first recursive unification fails;
+\item the first succeeds but the second recursive unification fails;
+\item both succeed and their substitutions are composed.
+\end{enumerate}
+The extracted answer is the following nested conditional:
+\begin{lstlisting}
+(ANSWER-IF (MW-FAIL (MW-UNIFY M M1))
+  (VALUES MW-NONE)
+  (ANSWER-IF
+    (MW-FAIL
+      (MW-UNIFY
+        (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+        (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1)))
+    (VALUES MW-NONE)
+    (VALUES
+      (MW-SOME
+        (MW-COMPOSE
+          (MW-SUBST-OF (MW-UNIFY M M1))
+          (MW-SUBST-OF
+            (MW-UNIFY
+              (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+              (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1))))))))
+\end{lstlisting}
+This term mirrors the conventional recursive unification skeleton, while
+remaining within SNARK's first-order answer-extraction mechanism.
+
+\section{Working Example II: Square Root and Binary Search}
+
+Manna and Waldinger's binary-search example starts from a specification for
+approximating the square root of a nonnegative real number within a positive
+tolerance.  Their derivation shows that a binary-search step emerges naturally:
+given a rougher interval of width \(2\epsilon\), test whether the exact square
+root is in the right half; if so, move the lower endpoint right by
+\(\epsilon\), otherwise keep it \cite{MannaWaldinger1985IJCAI,MannaWaldinger1987}.
+The local SNARK development abstracts away the full real
+arithmetic theory and focuses on this constructive branch.
+
+\subsection{Binary-Search Step}
+
+The predicate \texttt{MW-SQRT-WITHIN} denotes that an answer is within the
+desired interval.  The predicate \texttt{MW-LE} abstracts the comparison
+\((z+\epsilon)^2 \leq r\).  The two obligations are:
+\begin{align*}
+  (z+\epsilon)^2 \leq r
+    &\Rightarrow \mathrm{sqrt\_within}(r,z+\epsilon,\epsilon),\\
+  \neg((z+\epsilon)^2 \leq r)
+    &\Rightarrow \mathrm{sqrt\_within}(r,z,\epsilon).
+\end{align*}
+The extracted SNARK answer is:
+\begin{lstlisting}
+(ANSWER-IF (MW-LE (MW-SQUARE (MW-PLUS Z EPS)) R)
+  (VALUES (MW-PLUS Z EPS))
+  (VALUES Z))
+\end{lstlisting}
+This is the binary-search branch in its smallest form.
+
+\subsection{Recursive Skeleton}
+
+The second square-root example adds a base-case test and a recursive call
+\texttt{MW-SQRT} at doubled
+tolerance:
+\begin{lstlisting}
+(ANSWER-IF (MW-LARGE-TOLERANCE R EPS)
+  (VALUES ZERO)
+  (ANSWER-IF
+    (MW-LE
+      (MW-SQUARE
+        (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+      R)
+    (VALUES (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+    (VALUES (MW-SQRT R (MW-DOUBLE EPS)))))
+\end{lstlisting}
+This is faithful to the structural idea in the original derivation: use a
+larger tolerance recursively to obtain a rough estimate, then decide which half
+of the interval contains the desired value.
+
+\section{Limitations}
+
+These examples are deliberately small.  They are working SNARK demonstrations
+of answer extraction for classical synthesis patterns, not full reconstructions
+of Manna and Waldinger's deductive-tableau derivations.  In particular:
+\begin{itemize}
+\item the square-root examples use abstract arithmetic predicates rather than a
+complete theory of real numbers;
+\item the unification examples isolate key branches rather than proving a
+single global total-correctness theorem for all expression pairs;
+\item induction and termination arguments are represented by recursive
+skeleton symbols rather than synthesized from a full well-founded induction
+proof.
+\end{itemize}
+These choices keep the examples runnable and inspectable inside the existing
+SNARK example suite while preserving the core answer-extraction phenomenon.
+
+\section{Running the Examples}
+
+After rebuilding SNARK, start the local executable and enter the SNARK user
+package:
+\begin{lstlisting}
+./snark
+(in-package :snark-user)
+\end{lstlisting}
+Then run:
+\begin{lstlisting}
+(mw-synthesis-examples)
+\end{lstlisting}
+The result is a list pairing each example name with its extracted answer term.
+
+\appendix
+
+\section{Prompts and Reproducibility Log}
+
+This appendix records the user-facing prompts and the operational command log
+used to produce the development.  It does not include private chain-of-thought.
+For reproducibility, the private deliberation is replaced by concise reasoning
+summaries and concrete commands.
+
+\subsection{User Prompts}
+
+\begin{enumerate}
+\item
+\begin{lstlisting}
+Compile SNARK for my Mac.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+SNARK comes with the capability of answer extraction, which can be used for program synthesis. Manna/Waldinger did this for deductively synthesizing, among other things, the unification algorithm, binary search (via a specification for computing the square root), etc. Look these up and redo these examples in SNARK, under examples/synthesis.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+Under docs/synthesis, make a TeX document outlining this new development. Include the classical examples as your two working examples. In it, outline the development, but also include the prompts and the chain-of-thought/agent commands you've applied in an appendix. Use LNCS format for this work.
+\end{lstlisting}
+\end{enumerate}
+
+\subsection{Research Queries and Sources Consulted}
+
+The literature lookup used the following public-search queries:
+\begin{lstlisting}
+Manna Waldinger deductive synthesis unification algorithm program synthesis
+Manna Waldinger binary search square root deductive synthesis
+Manna Waldinger deductive synthesis square root binary search specification
+"Deductive synthesis of the unification algorithm" pdf
+"The origin of a binary-search paradigm" "sqrt" pdf
+"Automatic Deductive Synthesis of the Unification Algorithm" SNARK Waldinger pdf
+\end{lstlisting}
+The most relevant sources were the SRI pages and PDFs for unification and
+binary search, the IJCAI short paper on binary search, and the Isabelle theory
+page summarizing a Manna--Waldinger-style unification formalization.
+
+\subsection{Concise Reasoning Summary}
+
+\begin{enumerate}
+\item Inspect the repository to identify build scripts and existing example
+style.
+\item Build SNARK with the installed SBCL, because the checked-in 64-bit SBCL
+script points at an obsolete local path.
+\item Study existing answer-extraction examples, especially the front/last and
+list-reversal examples.
+\item Recast the two classical synthesis developments as small SNARK
+existence proofs whose answers are program fragments.
+\item Wire the new examples into both the manual system loader and ASDF example
+system.
+\item Rebuild SNARK and verify that the saved native image runs the new
+examples directly.
+\item Write this LNCS-format document under \texttt{docs/synthesis}.
+\end{enumerate}
+
+\subsection{Representative Agent Commands}
+
+\begin{lstlisting}
+ls
+git status --short
+rg --files
+find . -maxdepth 2 -iname '*readme*' -o -iname '*install*' -o -iname '*build*'
+
+sed -n '1,220p' INSTALL
+sed -n '1,220p' README
+sed -n '1,240p' compile
+sed -n '1,220p' make-snark-sbcl64
+sed -n '1,220p' run-snark
+
+command -v sbcl
+command -v ccl
+command -v ros
+uname -m
+sbcl --version
+./make-snark-sbcl
+
+ls -lh snark compile.out
+file snark
+tail -n 80 compile.out
+rg -n "ERROR|Error|error|WARNING|Warning|warning|failed|Unhandled|debugger invoked" compile.out
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(reverse-example :length 2)' \
+  --eval '(sb-ext:quit)'
+
+sed -n '1,260p' examples/front-last-example.lisp
+sed -n '1,260p' examples/coder-examples.lisp
+rg -n "Answer|:answer|answer|values|declare-function|to-lisp|program" docs README examples src
+sed -n '500,590p' src/main.lisp
+
+apply_patch
+# Added examples/synthesis/README
+# Added examples/synthesis/synthesis-examples.lisp
+# Updated snark-examples.asd
+# Updated snark-system.lisp
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/synthesis-examples.lisp")' \
+  --eval '(format t "~S~%" (mw-synthesis-examples))' \
+  --eval '(sb-ext:quit)'
+
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (mw-synthesis-examples))' \
+  --eval '(sb-ext:quit)'
+
+kpsewhich llncs.cls
+command -v latexmk
+command -v pdflatex
+mkdir -p docs/synthesis
+\end{lstlisting}
+
+\section{Extracted Answers}
+
+The rebuilt executable produced the following answers for the two headline
+working examples.
+
+\subsection{Unification}
+
+\begin{lstlisting}
+(UNIFICATION-VARIABLE-CASE
+  (ANSWER-IF (MW-OCCURS (MW-VAR V) TERM)
+    (VALUES MW-NONE)
+    (VALUES (MW-SOME (MW-BIND V TERM)))))
+
+(UNIFICATION-COMPOUND-CASE
+  (ANSWER-IF (MW-FAIL (MW-UNIFY M M1))
+    (VALUES MW-NONE)
+    (ANSWER-IF
+      (MW-FAIL
+        (MW-UNIFY
+          (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+          (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1)))
+      (VALUES MW-NONE)
+      (VALUES
+        (MW-SOME
+          (MW-COMPOSE
+            (MW-SUBST-OF (MW-UNIFY M M1))
+            (MW-SUBST-OF
+              (MW-UNIFY
+                (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N)
+                (MW-SUBST (MW-SUBST-OF (MW-UNIFY M M1)) N1)))))))))
+\end{lstlisting}
+
+\subsection{Binary Search for Square Root}
+
+\begin{lstlisting}
+(SQUARE-ROOT-BINARY-SEARCH-STEP
+  (ANSWER-IF (MW-LE (MW-SQUARE (MW-PLUS Z EPS)) R)
+    (VALUES (MW-PLUS Z EPS))
+    (VALUES Z)))
+
+(SQUARE-ROOT-BINARY-SEARCH-PROGRAM
+  (ANSWER-IF (MW-LARGE-TOLERANCE R EPS)
+    (VALUES ZERO)
+    (ANSWER-IF
+      (MW-LE
+        (MW-SQUARE
+          (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+        R)
+      (VALUES (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
+      (VALUES (MW-SQRT R (MW-DOUBLE EPS))))))
+\end{lstlisting}
+
+\begin{thebibliography}{8}
+
+\bibitem{MannaWaldinger1981}
+Manna, Z., Waldinger, R.:
+Deductive synthesis of the unification algorithm.
+Science of Computer Programming 1(1--2), 5--48 (1981).
+\url{https://www.sri.com/publication/artificial-intelligence-pubs/deductive-synthesis-of-the-unification-algorithm/}
+
+\bibitem{Waldinger2021}
+Waldinger, R.:
+What, Again? Automatic Deductive Synthesis of the Unification Algorithm.
+UNIF 2021 (2021).
+\url{https://www.sri.com/publication/artificial-intelligence-pubs/what-again-automatic-deductive-synthesis-of-the-unification-algorithm/}
+
+\bibitem{IsabelleUnification}
+Coen, M., Slind, K., Krauss, A.:
+Isabelle/HOL theory \texttt{HOL-ex/Unification}.
+\url{https://isabelle.in.tum.de/library/HOL/HOL-ex/Unification.html}
+
+\bibitem{MannaWaldinger1985IJCAI}
+Manna, Z., Waldinger, R.:
+The Origin of the Binary-Search Paradigm.
+Proceedings of IJCAI 1985, 223--225 (1985).
+\url{https://www.ijcai.org/Proceedings/85-1/Papers/041.pdf}
+
+\bibitem{MannaWaldinger1987}
+Manna, Z., Waldinger, R.:
+The origin of a binary-search paradigm.
+Science of Computer Programming 9(1), 37--83 (1987).
+\url{https://www.sri.com/publication/artificial-intelligence-pubs/the-origin-of-the-binary-search-paradigm/}
+
+\bibitem{MannaWaldinger1980}
+Manna, Z., Waldinger, R.:
+A deductive approach to program synthesis.
+ACM Transactions on Programming Languages and Systems 2(1), 90--121 (1980).
+\url{https://www.sri.com/publication/artificial-intelligence-pubs/a-deductive-approach-to-program-synthesis/}
+
+\bibitem{SnarkGuide}
+Stickel, M., Waldinger, R., Chaudhri, V.:
+A Guide to SNARK.
+\url{https://nilqed.github.io/SNARK/tutorial/tutorial.html}
+
+\end{thebibliography}
+
+\end{document}

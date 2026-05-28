@@ -176,6 +176,70 @@
          :answer '(values ?answer))
   (mw-synthesis-answer))
 
+(defun mw-declare-arithmetic-synthesis-language ()
+  (dolist (name '(a b n d zero))
+    (declare-constant name))
+  (dolist (entry '((mw-gcd 2)
+                   (mw-minus 2)
+                   (mw-qr 2)
+                   (mw-pair 2)
+                   (mw-succ 1)
+                   (mw-quotient-of 1)
+                   (mw-remainder-of 1)))
+    (apply #'declare-function entry))
+  (dolist (entry '((mw-eq 2)
+                   (mw-gt 2)
+                   (mw-lt 2)
+                   (mw-gcd-out 3)
+                   (mw-qr-out 3)))
+    (apply #'declare-relation entry)))
+
+(defun mw-gcd-subtractive-program ()
+  ;; Subtractive GCD in the style of Manna/Waldinger's gcd correctness example:
+  ;; equal arguments finish; otherwise recur on the larger argument minus the
+  ;; smaller one.
+  (mw-synthesis-setup)
+  (mw-declare-arithmetic-synthesis-language)
+  (assert '(or (mw-eq a b) (mw-gt a b) (mw-gt b a))
+          :name 'mw-gcd-trichotomy)
+  (assert '(implies
+            (mw-eq a b)
+            (mw-gcd-out a b a))
+          :name 'mw-gcd-equal-case)
+  (assert '(implies
+            (mw-gt a b)
+            (mw-gcd-out a b (mw-gcd (mw-minus a b) b)))
+          :name 'mw-gcd-left-reduction)
+  (assert '(implies
+            (mw-gt b a)
+            (mw-gcd-out a b (mw-gcd a (mw-minus b a))))
+          :name 'mw-gcd-right-reduction)
+  (prove '(mw-gcd-out a b ?answer)
+         :answer '(values ?answer))
+  (mw-synthesis-answer))
+
+(defun mw-quotient-remainder-program ()
+  ;; Quotient/remainder by recursive subtraction.  For natural N and positive D,
+  ;; if N<D return (0,N); otherwise recurse on N-D and increment the quotient.
+  (mw-synthesis-setup)
+  (mw-declare-arithmetic-synthesis-language)
+  (assert '(implies
+            (mw-lt n d)
+            (mw-qr-out n d (mw-pair zero n)))
+          :name 'mw-qr-base-case)
+  (assert '(implies
+            (not (mw-lt n d))
+            (mw-qr-out
+             n
+             d
+             (mw-pair
+              (mw-succ (mw-quotient-of (mw-qr (mw-minus n d) d)))
+              (mw-remainder-of (mw-qr (mw-minus n d) d)))))
+          :name 'mw-qr-recursive-case)
+  (prove '(mw-qr-out n d ?answer)
+         :answer '(values ?answer))
+  (mw-synthesis-answer))
+
 (defun mw-synthesis-examples ()
   (list
    (list 'unification-variable-case
@@ -187,7 +251,11 @@
    (list 'square-root-binary-search-step
          (mw-square-root-binary-search-step))
    (list 'square-root-binary-search-program
-         (mw-square-root-binary-search-program))))
+         (mw-square-root-binary-search-program))
+   (list 'gcd-subtractive-program
+         (mw-gcd-subtractive-program))
+   (list 'quotient-remainder-program
+         (mw-quotient-remainder-program))))
 
 ;;; Executable interpretations of the extracted symbolic programs.
 ;;;
@@ -297,12 +365,54 @@
   (and (<= (* z z) r)
        (< r (* (+ z eps) (+ z eps)))))
 
+(defun mw-run-gcd (a b)
+  (unless (and (integerp a) (plusp a))
+    (error "A must be a positive integer, not ~S." a))
+  (unless (and (integerp b) (plusp b))
+    (error "B must be a positive integer, not ~S." b))
+  (cond
+   ((= a b)
+    a)
+   ((> a b)
+    (mw-run-gcd (- a b) b))
+   (t
+    (mw-run-gcd a (- b a)))))
+
+(defun mw-run-quotient-remainder (n d)
+  (unless (and (integerp n) (not (minusp n)))
+    (error "N must be a natural number, not ~S." n))
+  (unless (and (integerp d) (plusp d))
+    (error "D must be a positive integer, not ~S." d))
+  (if (< n d)
+      (list :quotient 0 :remainder n)
+      (let ((qr (mw-run-quotient-remainder (- n d) d)))
+        (list :quotient (1+ (getf qr :quotient))
+              :remainder (getf qr :remainder)))))
+
+(defun mw-run-quotient-remainder-spec-p (n d qr)
+  (and (= n (+ (* (getf qr :quotient) d) (getf qr :remainder)))
+       (<= 0 (getf qr :remainder))
+       (< (getf qr :remainder) d)))
+
 (defun mw-run-square-root-demo (&optional (r 10) (eps 1/100))
   (let ((z (mw-run-sqrt r eps)))
     (list :r r
           :eps eps
           :answer z
           :within-spec (mw-run-sqrt-within-p r eps z))))
+
+(defun mw-run-gcd-demo (&optional (a 84) (b 30))
+  (list :a a
+        :b b
+        :answer (mw-run-gcd a b)
+        :cl-gcd (gcd a b)))
+
+(defun mw-run-quotient-remainder-demo (&optional (n 37) (d 5))
+  (let ((qr (mw-run-quotient-remainder n d)))
+    (list :n n
+          :d d
+          :answer qr
+          :within-spec (mw-run-quotient-remainder-spec-p n d qr))))
 
 (defun mw-run-unification-demo ()
   (list
@@ -322,6 +432,8 @@
 (defun mw-executable-synthesis-demos ()
   (list
    (list 'unification (mw-run-unification-demo))
-   (list 'square-root (mw-run-square-root-demo))))
+   (list 'square-root (mw-run-square-root-demo))
+   (list 'gcd (mw-run-gcd-demo))
+   (list 'quotient-remainder (mw-run-quotient-remainder-demo))))
 
 ;;; synthesis-examples.lisp EOF

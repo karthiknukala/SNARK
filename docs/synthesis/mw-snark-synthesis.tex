@@ -29,10 +29,12 @@
 SNARK supports answer extraction from refutation proofs, a mechanism that
 connects automated theorem proving with deductive program synthesis.  This note
 documents a small extension of the local SNARK example suite under
-\texttt{examples/synthesis}.  The extension recasts two classical
+\texttt{examples/synthesis}.  The extension recasts classical
 Manna--Waldinger developments as runnable SNARK examples: synthesis of the
-unification algorithm and emergence of the binary-search paradigm in the
-square-root approximation problem.  The development is not a verbatim
+unification algorithm, emergence of the binary-search paradigm in the
+square-root approximation problem, subtractive greatest-common-divisor
+computation, and quotient/remainder computation by recursive subtraction.  The
+development is not a verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
 extract program terms from proofs.  It also includes executable Lisp
@@ -40,7 +42,8 @@ interpretations of the extracted terms, making explicit the gap between a proof
 answer and a runnable program.
 
 \keywords{SNARK \and Answer extraction \and Deductive synthesis \and
-Unification \and Binary search}
+Unification \and Binary search \and Greatest common divisor \and Integer
+division}
 \end{abstract}
 
 \section{Overview}
@@ -52,7 +55,7 @@ proof of that theorem carries enough information to compute the output.  In
 SNARK, this information is represented by answers attached to rows.  When a
 proof closes, \texttt{(answer t)} can be read as the extracted witness term.
 
-The local development adds a new synthesis example file.  It contributes five
+The local development adds a new synthesis example file.  It contributes seven
 entry points:
 \begin{lstlisting}
 (mw-unification-variable-case)
@@ -60,8 +63,10 @@ entry points:
 (mw-unification-compound-case)
 (mw-square-root-binary-search-step)
 (mw-square-root-binary-search-program)
+(mw-gcd-subtractive-program)
+(mw-quotient-remainder-program)
 \end{lstlisting}
-The aggregator \texttt{(mw-synthesis-examples)} runs all five and returns their
+The aggregator \texttt{(mw-synthesis-examples)} runs all seven and returns their
 extracted program terms.  The examples are also wired into
 \texttt{snark-system.lisp} and \texttt{snark-examples.asd}, so rebuilding SNARK
 compiles them with the rest of the example suite.
@@ -70,6 +75,8 @@ The same file also contains runnable interpretations:
 \begin{lstlisting}
 (mw-run-unify term1 term2)
 (mw-run-sqrt r eps)
+(mw-run-gcd a b)
+(mw-run-quotient-remainder n d)
 (mw-executable-synthesis-demos)
 \end{lstlisting}
 These are ordinary Common Lisp functions.  They are included to show where the
@@ -217,6 +224,66 @@ This is faithful to the structural idea in the original derivation: use a
 larger tolerance recursively to obtain a rough estimate, then decide which half
 of the interval contains the desired value.
 
+\section{Working Example III: Greatest Common Divisor}
+
+Manna and Waldinger used the greatest-common-divisor program as one of their
+arithmetic examples in the intermittent-assertion account of program
+correctness \cite{MannaWaldinger1978}.  The local SNARK example reuses the same
+subtractive Euclidean structure in synthesis form.  For positive integers
+\(a\) and \(b\), one of three cases applies:
+\begin{align*}
+  a=b &\Rightarrow \mathrm{gcd}(a,b)=a,\\
+  a>b &\Rightarrow \mathrm{gcd}(a,b)=\mathrm{gcd}(a-b,b),\\
+  b>a &\Rightarrow \mathrm{gcd}(a,b)=\mathrm{gcd}(a,b-a).
+\end{align*}
+In SNARK, the comparison predicates and subtraction operation are kept
+abstract.  The proof asks for an output satisfying \texttt{MW-GCD-OUT}:
+\begin{lstlisting}
+(prove '(mw-gcd-out a b ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+The extracted answer is:
+\begin{lstlisting}
+(ANSWER-IF (MW-GT B A)
+  (VALUES (MW-GCD A (MW-MINUS B A)))
+  (ANSWER-IF (MW-GT A B)
+    (VALUES (MW-GCD (MW-MINUS A B) B))
+    (VALUES A)))
+\end{lstlisting}
+The order of tests is chosen by SNARK's proof search, but the control
+structure is the expected one: when neither strict inequality branch applies,
+the equality case returns \(a\).
+
+\section{Working Example IV: Quotient and Remainder}
+
+The quotient/remainder example follows the integer-division development in
+Manna and Waldinger's TOPLAS paper on deductive program synthesis
+\cite{MannaWaldinger1980}.  The target computation is: for natural \(n\) and
+positive \(d\), return \(q,r\) such that
+\[
+  n = qd + r \quad\hbox{and}\quad 0 \leq r < d.
+\]
+The constructive split is the familiar recursive-subtraction program.  If
+\(n<d\), the quotient is zero and the remainder is \(n\).  Otherwise, recurse
+on \(n-d\), increment the quotient component, and keep the recursive remainder.
+The SNARK proof is:
+\begin{lstlisting}
+(prove '(mw-qr-out n d ?answer)
+       :answer '(values ?answer))
+\end{lstlisting}
+and the extracted answer is:
+\begin{lstlisting}
+(ANSWER-IF (MW-LT N D)
+  (VALUES (MW-PAIR ZERO N))
+  (VALUES
+    (MW-PAIR
+      (MW-SUCC (MW-QUOTIENT-OF (MW-QR (MW-MINUS N D) D)))
+      (MW-REMAINDER-OF (MW-QR (MW-MINUS N D) D)))))
+\end{lstlisting}
+Here again the proof term is not yet host-language code.  It names a recursive
+call \texttt{MW-QR}, projections from its pair result, and arithmetic
+operations that must be interpreted before the program can be run.
+
 \section{Limitations}
 
 These examples are deliberately small.  They are working SNARK demonstrations
@@ -225,6 +292,8 @@ of Manna and Waldinger's deductive-tableau derivations.  In particular:
 \begin{itemize}
 \item the square-root examples use abstract arithmetic predicates rather than a
 complete theory of real numbers;
+\item the GCD and quotient/remainder examples similarly use abstract integer
+comparison and subtraction predicates in the proof layer;
 \item the unification examples isolate key branches rather than proving a
 single global total-correctness theorem for all expression pairs;
 \item induction and termination arguments are represented by recursive
@@ -254,9 +323,12 @@ The SNARK proof answers are executable-looking, but they are still symbolic
 terms in an object language.  For example, the unification proof answer contains
 \texttt{MW-OCCURS}, \texttt{MW-UNIFY}, \texttt{MW-SUBST-OF}, and
 \texttt{MW-COMPOSE}.  The square-root proof answer contains \texttt{MW-LE},
-\texttt{MW-SQUARE}, \texttt{MW-PLUS}, and \texttt{MW-SQRT}.  SNARK has proved
-that a witness with this shape exists under the stated obligations; it has not,
-by itself, supplied concrete Common Lisp definitions for those abstract symbols.
+\texttt{MW-SQUARE}, \texttt{MW-PLUS}, and \texttt{MW-SQRT}.  The GCD and
+quotient/remainder answers contain \texttt{MW-GT}, \texttt{MW-LT},
+\texttt{MW-MINUS}, \texttt{MW-GCD}, \texttt{MW-QR}, and pair projection
+symbols.  SNARK has proved that a witness with this shape exists under the
+stated obligations; it has not, by itself, supplied concrete Common Lisp
+definitions for those abstract symbols.
 
 The distribution therefore includes explicit executable interpretations.  For
 square root, the recursive skeleton becomes:
@@ -282,8 +354,25 @@ sample call is:
  '(mw-app (mw-const f) (mw-const a)))
 \end{lstlisting}
 which returns a successful substitution binding \texttt{x} to
-\texttt{(mw-const a)}.  The following command runs both executable
-demonstrations:
+\texttt{(mw-const a)}.
+
+For the arithmetic examples, the runners instantiate the symbolic comparisons
+and recursive calls over Common Lisp integers:
+\begin{lstlisting}
+(defun mw-run-gcd (a b)
+  (cond
+   ((= a b) a)
+   ((> a b) (mw-run-gcd (- a b) b))
+   (t (mw-run-gcd a (- b a)))))
+
+(defun mw-run-quotient-remainder (n d)
+  (if (< n d)
+      (list :quotient 0 :remainder n)
+      (let ((qr (mw-run-quotient-remainder (- n d) d)))
+        (list :quotient (1+ (getf qr :quotient))
+              :remainder (getf qr :remainder)))))
+\end{lstlisting}
+The following command runs all executable demonstrations:
 \begin{lstlisting}
 (mw-executable-synthesis-demos)
 \end{lstlisting}
@@ -315,6 +404,26 @@ SNARK comes with the capability of answer extraction, which can be used for prog
 \begin{lstlisting}
 Under docs/synthesis, make a TeX document outlining this new development. Include the classical examples as your two working examples. In it, outline the development, but also include the prompts and the chain-of-thought/agent commands you've applied in an appendix. Use LNCS format for this work.
 \end{lstlisting}
+\item
+\begin{lstlisting}
+Add a bunch of the generated files (fasls, TeX files) and stuff to a gitignore.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+For the examples we have, how can we run the generated programs?
+\end{lstlisting}
+\item
+\begin{lstlisting}
+Can these be included in the distribution and the writeup, to demonstrate the gap between the SNARK proof term and the true executable code?
+\end{lstlisting}
+\item
+\begin{lstlisting}
+What are other interesting, non-trivial examples like unification and binary search that we can do? Emphasis on the non-trivial.
+\end{lstlisting}
+\item
+\begin{lstlisting}
+Yes, let's do GCD and quotient remainder (and put those in the existing mw-... suite, since those are examples they did -- cite those works in the paper too).
+\end{lstlisting}
 \end{enumerate}
 
 \subsection{Research Queries and Sources Consulted}
@@ -327,10 +436,16 @@ Manna Waldinger deductive synthesis square root binary search specification
 "Deductive synthesis of the unification algorithm" pdf
 "The origin of a binary-search paradigm" "sqrt" pdf
 "Automatic Deductive Synthesis of the Unification Algorithm" SNARK Waldinger pdf
+Manna Waldinger quotient remainder deductive program synthesis
+Manna Waldinger gcd intermittent assertions program correctness
+"Manna" "Waldinger" "greatest common divisor" "gcd"
+"Is 'Sometime' Sometimes Better Than 'Always'" "Manna" "Waldinger" gcd
 \end{lstlisting}
 The most relevant sources were the SRI pages and PDFs for unification and
-binary search, the IJCAI short paper on binary search, and the Isabelle theory
-page summarizing a Manna--Waldinger-style unification formalization.
+binary search, the IJCAI short paper on binary search, the SRI page for the
+TOPLAS deductive-synthesis paper, the SRI page for the intermittent-assertion
+paper, and the Isabelle theory page summarizing a Manna--Waldinger-style
+unification formalization.
 
 \subsection{Concise Reasoning Summary}
 
@@ -348,6 +463,10 @@ system.
 \item Rebuild SNARK and verify that the saved native image runs the new
 examples directly.
 \item Write this LNCS-format document under \texttt{docs/synthesis}.
+\item Add executable interpretations for the symbolic answer terms to make the
+proof-answer/executable-code gap concrete.
+\item Extend the Manna--Waldinger suite with GCD and quotient/remainder
+examples and cite their classical sources.
 \end{enumerate}
 
 \subsection{Representative Agent Commands}
@@ -410,6 +529,13 @@ apply_patch
   --eval '(format t "~S~%" (mw-executable-synthesis-demos))' \
   --eval '(sb-ext:quit)'
 
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/synthesis-examples.lisp")' \
+  --eval '(format t "~S~%" (mw-synthesis-examples))' \
+  --eval '(format t "~S~%" (mw-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
 kpsewhich llncs.cls
 command -v latexmk
 command -v pdflatex
@@ -418,8 +544,8 @@ mkdir -p docs/synthesis
 
 \section{Extracted Answers}
 
-The rebuilt executable produced the following answers for the two headline
-working examples.
+The rebuilt executable produced the following answers for the headline working
+examples.
 
 \subsection{Unification}
 
@@ -468,6 +594,29 @@ working examples.
       (VALUES (MW-SQRT R (MW-DOUBLE EPS))))))
 \end{lstlisting}
 
+\subsection{Greatest Common Divisor}
+
+\begin{lstlisting}
+(GCD-SUBTRACTIVE-PROGRAM
+  (ANSWER-IF (MW-GT B A)
+    (VALUES (MW-GCD A (MW-MINUS B A)))
+    (ANSWER-IF (MW-GT A B)
+      (VALUES (MW-GCD (MW-MINUS A B) B))
+      (VALUES A))))
+\end{lstlisting}
+
+\subsection{Quotient and Remainder}
+
+\begin{lstlisting}
+(QUOTIENT-REMAINDER-PROGRAM
+  (ANSWER-IF (MW-LT N D)
+    (VALUES (MW-PAIR ZERO N))
+    (VALUES
+      (MW-PAIR
+        (MW-SUCC (MW-QUOTIENT-OF (MW-QR (MW-MINUS N D) D)))
+        (MW-REMAINDER-OF (MW-QR (MW-MINUS N D) D)))))))
+\end{lstlisting}
+
 \section{Executable Demo Output}
 
 Loading the synthesis example file and running the executable demo function
@@ -478,13 +627,18 @@ produced:
    (CONSTANT-CLASH MW-NONE)
    (OCCURS-CHECK MW-NONE)))
  (SQUARE-ROOT
-  (:R 10 :EPS 1/100 :ANSWER 79/25 :WITHIN-SPEC T)))
+  (:R 10 :EPS 1/100 :ANSWER 79/25 :WITHIN-SPEC T))
+ (GCD
+  (:A 84 :B 30 :ANSWER 6 :CL-GCD 6))
+ (QUOTIENT-REMAINDER
+  (:N 37 :D 5 :ANSWER (:QUOTIENT 7 :REMAINDER 2)
+   :WITHIN-SPEC T)))
 \end{lstlisting}
 This output is intentionally different in kind from the extracted answers above:
 it is the result of executing concrete Lisp functions that interpret the
 symbols appearing in the proof terms.
 
-\begin{thebibliography}{8}
+\begin{thebibliography}{9}
 
 \bibitem{MannaWaldinger1981}
 Manna, Z., Waldinger, R.:
@@ -503,6 +657,13 @@ Coen, M., Slind, K., Krauss, A.:
 Isabelle/HOL theory \texttt{HOL-ex/Unification}.
 \url{https://isabelle.in.tum.de/library/HOL/HOL-ex/Unification.html}
 
+\bibitem{MannaWaldinger1978}
+Manna, Z., Waldinger, R.:
+Is ``sometime'' sometimes better than ``always''? Intermittent assertions in
+proving program correctness.
+Communications of the ACM 21(2), 159--172 (1978).
+\url{https://doi.org/10.1145/359340.359353}
+
 \bibitem{MannaWaldinger1985IJCAI}
 Manna, Z., Waldinger, R.:
 The Origin of the Binary-Search Paradigm.
@@ -519,7 +680,7 @@ Science of Computer Programming 9(1), 37--83 (1987).
 Manna, Z., Waldinger, R.:
 A deductive approach to program synthesis.
 ACM Transactions on Programming Languages and Systems 2(1), 90--121 (1980).
-\url{https://www.sri.com/publication/artificial-intelligence-pubs/a-deductive-approach-to-program-synthesis/}
+\url{https://doi.org/10.1145/357084.357090}
 
 \bibitem{SnarkGuide}
 Stickel, M., Waldinger, R., Chaudhri, V.:

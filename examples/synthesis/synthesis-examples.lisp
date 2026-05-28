@@ -189,5 +189,139 @@
    (list 'square-root-binary-search-program
          (mw-square-root-binary-search-program))))
 
-;;; synthesis-examples.lisp EOF
+;;; Executable interpretations of the extracted symbolic programs.
+;;;
+;;; SNARK returns proof answers such as ANSWER-IF terms over symbols like
+;;; MW-OCCURS, MW-LE, and MW-COMPOSE.  The functions below make the gap explicit:
+;;; they are ordinary Lisp interpretations of those symbols, so the extracted
+;;; program shapes can be run on concrete inputs.
 
+(defun mw-run-var-p (term)
+  (and (consp term) (eq 'mw-var (first term))))
+
+(defun mw-run-const-p (term)
+  (and (consp term) (eq 'mw-const (first term))))
+
+(defun mw-run-app-p (term)
+  (and (consp term) (eq 'mw-app (first term))))
+
+(defun mw-run-success-p (result)
+  (and (consp result) (eq 'mw-some (first result))))
+
+(defun mw-run-fail-p (result)
+  (eq 'mw-none result))
+
+(defun mw-run-subst-of (result)
+  (and (mw-run-success-p result) (second result)))
+
+(defun mw-run-occurs-p (var term)
+  ;; Strict occurrence, matching the usual occurs check: a variable does not
+  ;; occur in itself, but it occurs in a compound term containing it.
+  (and (mw-run-app-p term)
+       (or (equal var (second term))
+           (equal var (third term))
+           (mw-run-occurs-p var (second term))
+           (mw-run-occurs-p var (third term)))))
+
+(defun mw-run-apply-subst (subst term)
+  (cond
+   ((mw-run-var-p term)
+    (let ((binding (assoc (second term) subst :test #'equal)))
+      (if binding
+          (mw-run-apply-subst subst (second binding))
+          term)))
+   ((mw-run-app-p term)
+    `(mw-app ,(mw-run-apply-subst subst (second term))
+             ,(mw-run-apply-subst subst (third term))))
+   (t
+    term)))
+
+(defun mw-run-compose (subst1 subst2)
+  (append
+   (mapcar (lambda (binding)
+             (list (first binding)
+                   (mw-run-apply-subst subst2 (second binding))))
+           subst1)
+   subst2))
+
+(defun mw-run-unify-var (var term)
+  (if (mw-run-occurs-p `(mw-var ,var) term)
+      'mw-none
+      `(mw-some ((,var ,term)))))
+
+(defun mw-run-unify (term1 term2)
+  (cond
+   ((equal term1 term2)
+    '(mw-some nil))
+   ((mw-run-var-p term1)
+    (mw-run-unify-var (second term1) term2))
+   ((mw-run-var-p term2)
+    (mw-run-unify-var (second term2) term1))
+   ((and (mw-run-const-p term1) (mw-run-const-p term2))
+    (if (equal (second term1) (second term2))
+        '(mw-some nil)
+        'mw-none))
+   ((and (mw-run-app-p term1) (mw-run-app-p term2))
+    (let ((left-result (mw-run-unify (second term1) (second term2))))
+      (if (mw-run-fail-p left-result)
+          'mw-none
+          (let* ((left-subst (mw-run-subst-of left-result))
+                 (right-result
+                   (mw-run-unify
+                    (mw-run-apply-subst left-subst (third term1))
+                    (mw-run-apply-subst left-subst (third term2)))))
+            (if (mw-run-fail-p right-result)
+                'mw-none
+                `(mw-some
+                  ,(mw-run-compose left-subst
+                                   (mw-run-subst-of right-result))))))))
+   (t
+    'mw-none)))
+
+(defun mw-run-sqrt-step (r eps z)
+  (if (<= (* (+ z eps) (+ z eps)) r)
+      (+ z eps)
+      z))
+
+(defun mw-run-sqrt (r eps)
+  (unless (and (realp r) (not (minusp r)))
+    (error "R must be a nonnegative real number, not ~S." r))
+  (unless (and (realp eps) (plusp eps))
+    (error "EPS must be a positive real number, not ~S." eps))
+  (if (< (max r 1) eps)
+      0
+      (let ((z (mw-run-sqrt r (* 2 eps))))
+        (mw-run-sqrt-step r eps z))))
+
+(defun mw-run-sqrt-within-p (r eps z)
+  (and (<= (* z z) r)
+       (< r (* (+ z eps) (+ z eps)))))
+
+(defun mw-run-square-root-demo (&optional (r 10) (eps 1/100))
+  (let ((z (mw-run-sqrt r eps)))
+    (list :r r
+          :eps eps
+          :answer z
+          :within-spec (mw-run-sqrt-within-p r eps z))))
+
+(defun mw-run-unification-demo ()
+  (list
+   (list 'success
+         (mw-run-unify
+          '(mw-app (mw-const f) (mw-var x))
+          '(mw-app (mw-const f) (mw-const a))))
+   (list 'constant-clash
+         (mw-run-unify
+          '(mw-app (mw-var x) (mw-var x))
+          '(mw-app (mw-const a) (mw-const b))))
+   (list 'occurs-check
+         (mw-run-unify
+          '(mw-var x)
+          '(mw-app (mw-var x) (mw-const a))))))
+
+(defun mw-executable-synthesis-demos ()
+  (list
+   (list 'unification (mw-run-unification-demo))
+   (list 'square-root (mw-run-square-root-demo))))
+
+;;; synthesis-examples.lisp EOF

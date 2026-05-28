@@ -35,7 +35,9 @@ unification algorithm and emergence of the binary-search paradigm in the
 square-root approximation problem.  The development is not a verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
-extract program terms from proofs.
+extract program terms from proofs.  It also includes executable Lisp
+interpretations of the extracted terms, making explicit the gap between a proof
+answer and a runnable program.
 
 \keywords{SNARK \and Answer extraction \and Deductive synthesis \and
 Unification \and Binary search}
@@ -63,6 +65,15 @@ The aggregator \texttt{(mw-synthesis-examples)} runs all five and returns their
 extracted program terms.  The examples are also wired into
 \texttt{snark-system.lisp} and \texttt{snark-examples.asd}, so rebuilding SNARK
 compiles them with the rest of the example suite.
+
+The same file also contains runnable interpretations:
+\begin{lstlisting}
+(mw-run-unify term1 term2)
+(mw-run-sqrt r eps)
+(mw-executable-synthesis-demos)
+\end{lstlisting}
+These are ordinary Common Lisp functions.  They are included to show where the
+SNARK answer term stops and concrete execution begins.
 
 \section{Answer Extraction in the Development}
 
@@ -237,6 +248,49 @@ Then run:
 \end{lstlisting}
 The result is a list pairing each example name with its extracted answer term.
 
+\section{From Proof Answers to Executable Code}
+
+The SNARK proof answers are executable-looking, but they are still symbolic
+terms in an object language.  For example, the unification proof answer contains
+\texttt{MW-OCCURS}, \texttt{MW-UNIFY}, \texttt{MW-SUBST-OF}, and
+\texttt{MW-COMPOSE}.  The square-root proof answer contains \texttt{MW-LE},
+\texttt{MW-SQUARE}, \texttt{MW-PLUS}, and \texttt{MW-SQRT}.  SNARK has proved
+that a witness with this shape exists under the stated obligations; it has not,
+by itself, supplied concrete Common Lisp definitions for those abstract symbols.
+
+The distribution therefore includes explicit executable interpretations.  For
+square root, the recursive skeleton becomes:
+\begin{lstlisting}
+(defun mw-run-sqrt-step (r eps z)
+  (if (<= (* (+ z eps) (+ z eps)) r)
+      (+ z eps)
+      z))
+
+(defun mw-run-sqrt (r eps)
+  (if (< (max r 1) eps)
+      0
+      (let ((z (mw-run-sqrt r (* 2 eps))))
+        (mw-run-sqrt-step r eps z))))
+\end{lstlisting}
+For unification, \texttt{mw-run-unify} implements the generated branches using
+concrete predicates for variables, constants, applications, occurs-check
+failure, substitution application, and substitution composition.  A successful
+sample call is:
+\begin{lstlisting}
+(mw-run-unify
+ '(mw-app (mw-const f) (mw-var x))
+ '(mw-app (mw-const f) (mw-const a)))
+\end{lstlisting}
+which returns a successful substitution binding \texttt{x} to
+\texttt{(mw-const a)}.  The following command runs both executable
+demonstrations:
+\begin{lstlisting}
+(mw-executable-synthesis-demos)
+\end{lstlisting}
+This split is deliberate: the proof answers document the synthesized control
+structure; the \texttt{MW-RUN-*} layer supplies the host-language semantics
+needed to execute it.
+
 \appendix
 
 \section{Prompts and Reproducibility Log}
@@ -351,6 +405,11 @@ apply_patch
   --eval '(format t "~S~%" (mw-synthesis-examples))' \
   --eval '(sb-ext:quit)'
 
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (mw-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
 kpsewhich llncs.cls
 command -v latexmk
 command -v pdflatex
@@ -408,6 +467,22 @@ working examples.
       (VALUES (MW-PLUS (MW-SQRT R (MW-DOUBLE EPS)) EPS))
       (VALUES (MW-SQRT R (MW-DOUBLE EPS))))))
 \end{lstlisting}
+
+\section{Executable Demo Output}
+
+Loading the synthesis example file and running the executable demo function
+produced:
+\begin{lstlisting}
+((UNIFICATION
+  ((SUCCESS (MW-SOME ((X (MW-CONST A)))))
+   (CONSTANT-CLASH MW-NONE)
+   (OCCURS-CHECK MW-NONE)))
+ (SQUARE-ROOT
+  (:R 10 :EPS 1/100 :ANSWER 79/25 :WITHIN-SPEC T)))
+\end{lstlisting}
+This output is intentionally different in kind from the extracted answers above:
+it is the result of executing concrete Lisp functions that interpret the
+symbols appearing in the proof terms.
 
 \begin{thebibliography}{8}
 

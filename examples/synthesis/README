@@ -18,8 +18,19 @@ Load and run them from a SNARK image:
   (mw-square-root-binary-search-program)
   (mw-synthesis-examples)
 
+The file also includes executable interpretations of the extracted symbolic
+programs:
+
+  (mw-run-unify term1 term2)
+  (mw-run-sqrt r eps)
+  (mw-executable-synthesis-demos)
+
+These functions are intentionally separate from the SNARK proofs.  SNARK
+extracts ANSWER-IF terms over abstract symbols such as MW-OCCURS, MW-COMPOSE,
+and MW-LE; the MW-RUN-* functions provide ordinary Lisp meanings for those
+symbols so the extracted program shapes can be run on concrete inputs.
+
 The square-root examples use abstract predicates such as MW-LE and
 MW-LARGE-TOLERANCE.  This keeps the example focused on answer extraction and
 the binary-search branching idea rather than on a full first-order development
 of real arithmetic.
-

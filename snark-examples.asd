@@ -17,4 +17,5 @@
                (:file "coder-examples")
                (:file "latin-squares")
                (:module "synthesis"
-                :components ((:file "synthesis-examples")))))
+                :components ((:file "synthesis-examples")
+                             (:file "new-synthesis-examples")))))

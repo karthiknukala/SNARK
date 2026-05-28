@@ -108,6 +108,7 @@
     ("examples" "coder-examples")
     ("examples" "latin-squares")
     ("examples" "synthesis" "synthesis-examples")
+    ("examples" "synthesis" "new-synthesis-examples")
     "patches"
     ))
 

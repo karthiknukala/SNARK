@@ -43,3 +43,29 @@ The GCD and quotient/remainder examples likewise keep arithmetic abstract in
 the SNARK proof and provide concrete Common Lisp meanings in the MW-RUN-*
 layer.  This makes the distribution show both sides of the development: the
 symbolic proof answer and the extra interpretation needed to run it.
+
+New synthesis examples
+======================
+
+The file new-synthesis-examples.lisp contains non-Manna/Waldinger examples
+intended to exercise the same answer-extraction paradigm on richer program
+shapes:
+
+  (new-stable-merge-program)
+  (new-stable-partition-program)
+  (new-plus-simplifier-program)
+  (new-shortest-path-relaxation-program)
+  (new-synthesis-examples)
+
+Their executable interpretations are:
+
+  (new-run-stable-merge xs ys)
+  (new-run-stable-partition xs predicate)
+  (new-run-simplify expr)
+  (new-run-relax-edge state u v w)
+  (new-executable-synthesis-demos)
+
+These examples stress recursive calls under constructors, paired outputs,
+prioritized rewrite rules, and functional state updates.  That makes them good
+next steps beyond the classical examples without requiring a full arithmetic,
+list, or graph theory inside SNARK.

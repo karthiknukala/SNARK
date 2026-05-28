@@ -34,9 +34,9 @@ Manna--Waldinger developments as runnable SNARK examples: synthesis of the
 unification algorithm, emergence of the binary-search paradigm in the
 square-root approximation problem, subtractive greatest-common-divisor
 computation, and quotient/remainder computation by recursive subtraction.  The
-development also adds four non-historical stress tests: stable merge, stable
-partition, addition simplification, and shortest-path relaxation.  It is not a
-verbatim
+development also adds three further stress tests: stable merge, stable
+partition, and a Boyer--Moore-style simplifier for normal-form IF-expressions
+\cite{BoyerMoore1979}.  It is not a verbatim
 reproduction of the original deductive-tableau proofs.  Instead, it isolates
 the central constructive obligations and uses SNARK's conditional answers to
 extract program terms from proofs.  It also includes executable Lisp
@@ -90,8 +90,7 @@ same answer-extraction interface:
 \begin{lstlisting}
 (new-stable-merge-program)
 (new-stable-partition-program)
-(new-plus-simplifier-program)
-(new-shortest-path-relaxation-program)
+(new-if-normal-form-simplifier-program)
 (new-synthesis-examples)
 \end{lstlisting}
 It also includes executable interpretations:
@@ -474,111 +473,131 @@ Answer:
       (NEW-CONS X (NEW-RIGHT (NEW-PARTITION XS))))))
 \end{lstlisting}
 
-\subsection{New Addition Simplifier}
+\subsection{New IF-Expression Simplifier}
 
-For an addition node \(e_1+e_2\), fold constants when both arguments are
-constants; otherwise eliminate additive zero on either side; otherwise rebuild
-from recursively simplified children.  SNARK input:
-\begin{lstlisting}
-(assert '(implies
-          (new-both-const e1 e2)
-          (new-simplify-out
-           (new-plus e1 e2)
-           (new-const (new-add-value e1 e2))))
-        :name 'new-plus-fold-constants)
-(assert '(implies
-          (and (not (new-both-const e1 e2))
-               (new-zero e1))
-          (new-simplify-out
-           (new-plus e1 e2)
-           (new-simplify e2)))
-        :name 'new-plus-drop-left-zero)
-(assert '(implies
-          (and (not (new-both-const e1 e2))
-               (not (new-zero e1))
-               (new-zero e2))
-          (new-simplify-out
-           (new-plus e1 e2)
-           (new-simplify e1)))
-        :name 'new-plus-drop-right-zero)
-(assert '(implies
-          (and (not (new-both-const e1 e2))
-               (not (new-zero e1))
-               (not (new-zero e2)))
-          (new-simplify-out
-           (new-plus e1 e2)
-           (new-plus (new-simplify e1) (new-simplify e2))))
-        :name 'new-plus-rebuild)
-(prove '(new-simplify-out (new-plus e1 e2) ?answer)
-       :answer '(values ?answer))
-\end{lstlisting}
-Answer:
-\begin{lstlisting}
-(ANSWER-IF (NEW-ZERO E2)
-  (ANSWER-IF (NEW-ZERO E1)
-    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
-      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
-      (VALUES (NEW-SIMPLIFY E2)))
-    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
-      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
-      (VALUES (NEW-SIMPLIFY E1))))
-  (ANSWER-IF (NEW-ZERO E1)
-    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
-      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
-      (VALUES (NEW-SIMPLIFY E2)))
-    (ANSWER-IF (NEW-BOTH-CONST E1 E2)
-      (VALUES (NEW-CONST (NEW-ADD-VALUE E1 E2)))
-      (VALUES (NEW-PLUS (NEW-SIMPLIFY E1)
-                        (NEW-SIMPLIFY E2))))))
-\end{lstlisting}
-
-\subsection{New Shortest-Path Relaxation}
-
-For an edge \(u\xrightarrow{w}v\), update the distance and predecessor of
-\(v\) exactly when the candidate path through \(u\) improves the current
-distance:
+Boyer and Moore use IF-expressions as a central datatype in the tautology
+checker development of \emph{A Computational Logic} \cite{BoyerMoore1979}.
+Here an expression is either \(\mathsf{True}\), \(\mathsf{False}\), a variable,
+or \(\mathsf{IF}(x,t,e)\).  The normal-form invariant says that every IF
+condition is a variable and that there are no immediate redundancies of the
+form \(\mathsf{IF}(x,A,A)\).  The stronger simplifier carries a path
+environment \(\Gamma\) so that no variable is repeated along any branch.  Let
+\[
+  T_x=S(t,\Gamma[x:=\mathsf{true}]),
+  \qquad
+  E_x=S(e,\Gamma[x:=\mathsf{false}]).
+\]
+Then the recursive IF-node cases are:
 \begin{align*}
-  d(u)+w<d(v) &\Rightarrow
-    s'=\mathrm{pred}(\mathrm{dist}(s,v,d(u)+w),v,u),\\
-  \neg(d(u)+w<d(v)) &\Rightarrow s'=s.
+  \Gamma(x)=\mathsf{true}
+    &\Rightarrow S(\mathsf{IF}(x,t,e),\Gamma)=S(t,\Gamma),\\
+  \Gamma(x)=\mathsf{false}
+    &\Rightarrow S(\mathsf{IF}(x,t,e),\Gamma)=S(e,\Gamma),\\
+  x\notin\Gamma,\; T_x=E_x
+    &\Rightarrow S(\mathsf{IF}(x,t,e),\Gamma)=T_x,\\
+  x\notin\Gamma,\; T_x\neq E_x
+    &\Rightarrow S(\mathsf{IF}(x,t,e),\Gamma)=\mathsf{IF}(x,T_x,E_x).
 \end{align*}
+The executable interpretation also handles the leaf cases:
+\(\mathsf{True}\) and \(\mathsf{False}\) return themselves; a variable already
+fixed by \(\Gamma\) becomes the corresponding truth value; an unknown variable
+returns itself.  The SNARK proof below isolates the recursive IF-node case.
 SNARK input:
 \begin{lstlisting}
+(assert '(new-if-expr expr)
+        :name 'new-if-input-is-if-node)
+(assert '(not (and (new-assumed-true (new-condition expr) env)
+                   (new-assumed-false (new-condition expr) env)))
+        :name 'new-if-assumptions-consistent)
 (assert '(implies
-          (new-lt (new-plus (new-distance u state) w)
-                  (new-distance v state))
-          (new-relax-out
-           state
-           u
-           v
-           w
-           (new-update-predecessor
-            (new-update-distance
-             state
-             v
-             (new-plus (new-distance u state) w))
-            v
-            u)))
-        :name 'new-relax-improves)
+          (and (new-if-expr expr)
+               (new-assumed-true (new-condition expr) env))
+          (new-if-simplify-out
+           expr
+           env
+           (new-simplify-if (new-then-branch expr) env)))
+        :name 'new-if-condition-known-true)
 (assert '(implies
-          (not (new-lt (new-plus (new-distance u state) w)
-                       (new-distance v state)))
-          (new-relax-out state u v w state))
-        :name 'new-relax-keeps-state)
-(prove '(new-relax-out state u v w ?answer)
+          (and (new-if-expr expr)
+               (not (new-assumed-true (new-condition expr) env))
+               (new-assumed-false (new-condition expr) env))
+          (new-if-simplify-out
+           expr
+           env
+           (new-simplify-if (new-else-branch expr) env)))
+        :name 'new-if-condition-known-false)
+(assert '(implies
+          (and (new-if-expr expr)
+               (not (new-assumed-true (new-condition expr) env))
+               (not (new-assumed-false (new-condition expr) env))
+               (new-same
+                (new-simplify-if
+                 (new-then-branch expr)
+                 (new-extend-true (new-condition expr) env))
+                (new-simplify-if
+                 (new-else-branch expr)
+                 (new-extend-false (new-condition expr) env))))
+          (new-if-simplify-out
+           expr
+           env
+           (new-simplify-if
+            (new-then-branch expr)
+            (new-extend-true (new-condition expr) env))))
+        :name 'new-if-redundant-branches)
+(assert '(implies
+          (and (new-if-expr expr)
+               (not (new-assumed-true (new-condition expr) env))
+               (not (new-assumed-false (new-condition expr) env))
+               (not
+                (new-same
+                 (new-simplify-if
+                  (new-then-branch expr)
+                  (new-extend-true (new-condition expr) env))
+                 (new-simplify-if
+                  (new-else-branch expr)
+                  (new-extend-false (new-condition expr) env)))))
+          (new-if-simplify-out
+           expr
+           env
+           (new-if
+            (new-condition expr)
+            (new-simplify-if
+             (new-then-branch expr)
+             (new-extend-true (new-condition expr) env))
+            (new-simplify-if
+             (new-else-branch expr)
+             (new-extend-false (new-condition expr) env)))))
+        :name 'new-if-rebuild)
+(prove '(new-if-simplify-out expr env ?answer)
        :answer '(values ?answer))
 \end{lstlisting}
 Answer:
 \begin{lstlisting}
-(ANSWER-IF
-  (NEW-LT (NEW-PLUS (NEW-DISTANCE U STATE) W)
-          (NEW-DISTANCE V STATE))
-  (VALUES
-    (NEW-UPDATE-PREDECESSOR
-      (NEW-UPDATE-DISTANCE
-        STATE V (NEW-PLUS (NEW-DISTANCE U STATE) W))
-      V U))
-  (VALUES STATE))
+(ANSWER-IF (NEW-ASSUMED-FALSE (NEW-CONDITION EXPR) ENV)
+  (VALUES (NEW-SIMPLIFY-IF (NEW-ELSE-BRANCH EXPR) ENV))
+  (ANSWER-IF (NEW-ASSUMED-TRUE (NEW-CONDITION EXPR) ENV)
+    (VALUES (NEW-SIMPLIFY-IF (NEW-THEN-BRANCH EXPR) ENV))
+    (ANSWER-IF
+      (NEW-SAME
+        (NEW-SIMPLIFY-IF
+          (NEW-THEN-BRANCH EXPR)
+          (NEW-EXTEND-TRUE (NEW-CONDITION EXPR) ENV))
+        (NEW-SIMPLIFY-IF
+          (NEW-ELSE-BRANCH EXPR)
+          (NEW-EXTEND-FALSE (NEW-CONDITION EXPR) ENV)))
+      (VALUES
+        (NEW-SIMPLIFY-IF
+          (NEW-THEN-BRANCH EXPR)
+          (NEW-EXTEND-TRUE (NEW-CONDITION EXPR) ENV)))
+      (VALUES
+        (NEW-IF
+          (NEW-CONDITION EXPR)
+          (NEW-SIMPLIFY-IF
+            (NEW-THEN-BRANCH EXPR)
+            (NEW-EXTEND-TRUE (NEW-CONDITION EXPR) ENV))
+          (NEW-SIMPLIFY-IF
+            (NEW-ELSE-BRANCH EXPR)
+            (NEW-EXTEND-FALSE (NEW-CONDITION EXPR) ENV)))))))
 \end{lstlisting}
 
 \section{Working Example I: Unification}
@@ -773,8 +792,8 @@ of Manna and Waldinger's deductive-tableau derivations.  In particular:
 complete theory of real numbers;
 \item the GCD and quotient/remainder examples similarly use abstract integer
 comparison and subtraction predicates in the proof layer;
-\item the new stable-merge, stable-partition, simplifier, and graph-relaxation
-examples use abstract list, expression, and graph-state theories;
+\item the new stable-merge, stable-partition, and IF-expression examples use
+abstract list and IF-expression theories;
 \item the unification examples isolate key branches rather than proving a
 single global total-correctness theorem for all expression pairs;
 \item induction and termination arguments are represented by recursive
@@ -809,9 +828,10 @@ terms in an object language.  For example, the unification proof answer contains
 quotient/remainder answers contain \texttt{MW-GT}, \texttt{MW-LT},
 \texttt{MW-MINUS}, \texttt{MW-GCD}, \texttt{MW-QR}, and pair projection
 symbols.  The new examples similarly contain abstract list constructors,
-rewrite predicates, and graph-state update symbols.  SNARK has proved that a
-witness with this shape exists under the stated obligations; it has not, by
-itself, supplied concrete Common Lisp definitions for those abstract symbols.
+IF-expression accessors, path-assumption predicates, and recursive
+simplification calls.  SNARK has proved that a witness with this shape exists
+under the stated obligations; it has not, by itself, supplied concrete Common
+Lisp definitions for those abstract symbols.
 
 The distribution therefore includes explicit executable interpretations.  For
 square root, the recursive skeleton becomes:
@@ -861,8 +881,8 @@ The following command runs all executable demonstrations:
 (new-executable-synthesis-demos)
 \end{lstlisting}
 This split is deliberate: the proof answers document the synthesized control
-structure; the \texttt{MW-RUN-*} layer supplies the host-language semantics
-needed to execute it.
+structure; the \texttt{MW-RUN-*} and \texttt{NEW-RUN-*} layers supply the
+host-language semantics needed to execute it.
 
 \appendix
 
@@ -916,6 +936,12 @@ Now, add a new file with "new" synthesis examples (since the ones we've done are
 \begin{lstlisting}
 In the documentation, for each example, could you include the (1) mathematical/logical specification (2) that specification in SNARK (the input to the theorem prover) and (3) the answer? Right now, we don't have the intermediate SNARK representation.
 \end{lstlisting}
+\item
+\begin{lstlisting}
+The addition simplification and shortest-path relaxation are kind of lame. Remove those and instead, do the following example (taken from Boyer/Moore, A Computational Logic):
+
+IF-expressions can be defined by a datatype that has a constructor for IF-expressions with three accessors: condition, thenBranch, and elseBranch, and the truth values: True and False, and variables. An IF-expression is in normal form if the condition part of any IF-expression is always a variable, and there are no redundant IF-expressions of the form IF(x, A, A). Write a simplifier for normal-form IF-expressions so that no variable is repeated along any branch.
+\end{lstlisting}
 \end{enumerate}
 
 \subsection{Research Queries and Sources Consulted}
@@ -932,12 +958,14 @@ Manna Waldinger quotient remainder deductive program synthesis
 Manna Waldinger gcd intermittent assertions program correctness
 "Manna" "Waldinger" "greatest common divisor" "gcd"
 "Is 'Sometime' Sometimes Better Than 'Always'" "Manna" "Waldinger" gcd
+Boyer Moore A Computational Logic IF expression normal form simplifier
+"A Computational Logic" Boyer Moore IF expressions normal form
 \end{lstlisting}
 The most relevant sources were the SRI pages and PDFs for unification and
 binary search, the IJCAI short paper on binary search, the SRI page for the
 TOPLAS deductive-synthesis paper, the SRI page for the intermittent-assertion
-paper, and the Isabelle theory page summarizing a Manna--Waldinger-style
-unification formalization.
+paper, the Isabelle theory page summarizing a Manna--Waldinger-style
+unification formalization, and Boyer and Moore's \emph{A Computational Logic}.
 
 \subsection{Concise Reasoning Summary}
 
@@ -959,11 +987,110 @@ examples directly.
 proof-answer/executable-code gap concrete.
 \item Extend the Manna--Waldinger suite with GCD and quotient/remainder
 examples and cite their classical sources.
-\item Add a separate new-example suite for stable merge, stable partition,
-addition simplification, and shortest-path relaxation.
+\item Add a separate new-example suite for stable merge, stable partition, and
+a Boyer--Moore IF-expression simplifier.
 \item Extend the writeup with a catalogue that exposes each example's
 mathematical specification, SNARK prover input, and extracted answer.
+\item Replace the weaker addition and shortest-path examples with the
+normal-form IF-expression simplifier and rebuild the distribution.
 \end{enumerate}
+
+\section{IF-Normalization Dialogue Example}
+
+This appendix section records the IF-normalization exchange as a focused
+example of how the synthesis suite evolved.  It includes the user prompt and
+the public reasoning used to translate that prompt into the final SNARK
+example.  It does not include private chain-of-thought.
+
+\subsection{Prompt}
+
+\begin{lstlisting}
+The addition simplification and shortest-path relaxation are kind of lame. Remove those and instead, do the following example (taken from Boyer/Moore, A Computational Logic):
+
+IF-expressions can be defined by a datatype that has a constructor for IF-expressions with three accessors: condition, thenBranch, and elseBranch, and the truth values: True and False, and variables. An IF-expression is in normal form if the condition part of any IF-expression is always a variable, and there are no redundant IF-expressions of the form IF(x, A, A). Write a simplifier for normal-form IF-expressions so that no variable is repeated along any branch.
+\end{lstlisting}
+
+\subsection{Public Reasoning}
+
+The design correction was to remove the two weaker examples rather than keep
+them as clutter.  The IF-normalization problem is a better stress test for
+answer extraction because it combines recursive descent, branch-local
+assumptions, equality of recursively simplified branches, and a normalization
+invariant.
+
+The SNARK object language used these symbols:
+\begin{lstlisting}
+NEW-IF, NEW-CONDITION, NEW-THEN-BRANCH, NEW-ELSE-BRANCH
+NEW-ASSUMED-TRUE, NEW-ASSUMED-FALSE
+NEW-EXTEND-TRUE, NEW-EXTEND-FALSE
+NEW-SIMPLIFY-IF
+NEW-SAME
+\end{lstlisting}
+The predicate \texttt{NEW-SAME} is the branch equality test used to collapse
+\(\mathsf{IF}(x,A,A)\) after recursive simplification.
+
+The first natural encoding treated the whole datatype at once: truth constants,
+variables, and IF nodes.  That was too broad for this compact example harness,
+so the SNARK proof obligation was narrowed to the recursive IF-node case while
+the executable interpretation retained the complete leaf semantics.  This keeps
+the extracted answer focused on the interesting synthesis step:
+\begin{enumerate}
+\item if the condition is already assumed true, simplify only the then-branch;
+\item if the condition is already assumed false, simplify only the else-branch;
+\item otherwise simplify both branches under extended assumptions;
+\item if those simplified branches are equal, return one branch;
+\item otherwise rebuild the IF node from the simplified branches.
+\end{enumerate}
+
+One additional consistency fact was added:
+\begin{lstlisting}
+(assert '(not (and (new-assumed-true (new-condition expr) env)
+                   (new-assumed-false (new-condition expr) env)))
+        :name 'new-if-assumptions-consistent)
+\end{lstlisting}
+This prevents the extracted answer from containing an impossible case where a
+condition is simultaneously known true and false.
+
+The executable demonstration then checks the host-language side of the gap.  A
+normal-form expression with repeated tests of \(x\) along branches is simplified
+to:
+\begin{lstlisting}
+(NEW-IF (NEW-VAR Y) NEW-TRUE NEW-FALSE)
+\end{lstlisting}
+which has no repeated variable along either branch and no redundant
+\(\mathsf{IF}(x,A,A)\) subexpression.
+
+\subsection{Representative Commands}
+
+\begin{lstlisting}
+rg -n "addition|simplifier|shortest|relax|graph|new-plus|new-shortest" \
+  docs/synthesis/mw-snark-synthesis.tex \
+  examples/synthesis/README \
+  examples/synthesis/new-synthesis-examples.lisp
+
+apply_patch
+# Removed new-plus-simplifier-program and new-shortest-path-relaxation-program.
+# Added new-if-normal-form-simplifier-program and new-run-if-simplify.
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(load "examples/synthesis/new-synthesis-examples.lisp")' \
+  --eval '(format t "~S~%" (new-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
+pkill -f './snark --noinform --disable-debugger'
+
+./make-snark-sbcl
+
+./snark --noinform --disable-debugger \
+  --eval '(in-package :snark-user)' \
+  --eval '(format t "~S~%" (new-synthesis-examples))' \
+  --eval '(format t "~S~%" (new-executable-synthesis-demos))' \
+  --eval '(sb-ext:quit)'
+
+latexmk -pdf -interaction=nonstopmode mw-snark-synthesis.tex
+\end{lstlisting}
 
 \subsection{Representative Agent Commands}
 
@@ -1129,7 +1256,7 @@ examples.
 
 \section{Executable Demo Output}
 
-Loading the synthesis example file and running the executable demo function
+Loading the synthesis example files and running the executable demo functions
 produced:
 \begin{lstlisting}
 ((UNIFICATION
@@ -1143,12 +1270,21 @@ produced:
  (QUOTIENT-REMAINDER
   (:N 37 :D 5 :ANSWER (:QUOTIENT 7 :REMAINDER 2)
    :WITHIN-SPEC T)))
+
+((STABLE-MERGE
+  (:LEFT (1 3 5 7) :RIGHT (2 3 4 9)
+   :ANSWER (1 2 3 3 4 5 7 9)))
+ (STABLE-PARTITION
+  (:INPUT (1 2 3 4 5 6 7)
+   :ANSWER (:KEPT (1 3 5 7) :DROPPED (2 4 6))))
+ (IF-NORMAL-FORM-SIMPLIFIER
+  (:ANSWER (NEW-IF (NEW-VAR Y) NEW-TRUE NEW-FALSE))))
 \end{lstlisting}
 This output is intentionally different in kind from the extracted answers above:
 it is the result of executing concrete Lisp functions that interpret the
 symbols appearing in the proof terms.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{10}
 
 \bibitem{MannaWaldinger1981}
 Manna, Z., Waldinger, R.:
@@ -1160,12 +1296,17 @@ Science of Computer Programming 1(1--2), 5--48 (1981).
 Waldinger, R.:
 What, Again? Automatic Deductive Synthesis of the Unification Algorithm.
 UNIF 2021 (2021).
-\url{https://www.sri.com/publication/artificial-intelligence-pubs/what-again-automatic-deductive-synthesis-of-the-unification-algorithm/}
 
 \bibitem{IsabelleUnification}
 Coen, M., Slind, K., Krauss, A.:
 Isabelle/HOL theory \texttt{HOL-ex/Unification}.
 \url{https://isabelle.in.tum.de/library/HOL/HOL-ex/Unification.html}
+
+\bibitem{BoyerMoore1979}
+Boyer, R.S., Moore, J.S.:
+A Computational Logic.
+ACM Monograph Series. Academic Press, New York (1979).
+\url{https://www.cs.utexas.edu/~boyer/acl.pdf}
 
 \bibitem{MannaWaldinger1978}
 Manna, Z., Waldinger, R.:

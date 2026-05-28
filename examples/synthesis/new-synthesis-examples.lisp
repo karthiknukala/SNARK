@@ -7,7 +7,7 @@
 ;;; Manna/Waldinger developments.  This file contains additional examples that
 ;;; exercise the same paradigm on algorithms that are useful stress tests for
 ;;; symbolic program extraction: recursive calls under constructors, paired
-;;; outputs, prioritized rewrite rules, and functional state updates.
+;;; outputs, branch-local assumptions, and post-recursion redundancy checks.
 
 (in-package :snark-user)
 
@@ -89,98 +89,98 @@
          :answer '(values ?answer))
   (new-synthesis-answer))
 
-(defun new-declare-expression-synthesis-language ()
-  (dolist (name '(e1 e2))
+(defun new-declare-if-synthesis-language ()
+  (dolist (name '(expr env new-true new-false))
     (declare-constant name))
-  (dolist (entry '((new-plus 2)
-                   (new-add-value 2)
-                   (new-const 1)
-                   (new-simplify 1)))
+  (dolist (entry '((new-if 3)
+                   (new-condition 1)
+                   (new-then-branch 1)
+                   (new-else-branch 1)
+                   (new-simplify-if 2)
+                   (new-extend-true 2)
+                   (new-extend-false 2)))
     (apply #'declare-function entry))
-  (dolist (entry '((new-both-const 2)
-                   (new-zero 1)
-                   (new-simplify-out 2)))
+  (dolist (entry '((new-true-expr 1)
+                   (new-false-expr 1)
+                   (new-var-expr 1)
+                   (new-if-expr 1)
+                   (new-assumed-true 2)
+                   (new-assumed-false 2)
+                   (new-same 2)
+                   (new-if-simplify-out 3)))
     (apply #'declare-relation entry)))
 
-(defun new-plus-simplifier-program ()
-  ;; A prioritized simplifier for addition nodes:
-  ;;   constant fold, then eliminate left zero, then eliminate right zero,
-  ;;   otherwise rebuild with simplified children.
+(defun new-if-normal-form-simplifier-program ()
+  ;; Boyer/Moore-style simplification of normal-form IF expressions.  The
+  ;; simplifier carries path assumptions.  Repeated variables are replaced by
+  ;; their assumed truth values, and recursively equal branches are collapsed.
   (new-synthesis-setup)
-  (new-declare-expression-synthesis-language)
+  (new-declare-if-synthesis-language)
+  (assert '(new-if-expr expr)
+          :name 'new-if-input-is-if-node)
+  (assert '(not (and (new-assumed-true (new-condition expr) env)
+                     (new-assumed-false (new-condition expr) env)))
+          :name 'new-if-assumptions-consistent)
   (assert '(implies
-            (new-both-const e1 e2)
-            (new-simplify-out
-             (new-plus e1 e2)
-             (new-const (new-add-value e1 e2))))
-          :name 'new-plus-fold-constants)
+            (and (new-if-expr expr)
+                 (new-assumed-true (new-condition expr) env))
+            (new-if-simplify-out
+             expr
+             env
+             (new-simplify-if (new-then-branch expr) env)))
+          :name 'new-if-condition-known-true)
   (assert '(implies
-            (and (not (new-both-const e1 e2))
-                 (new-zero e1))
-            (new-simplify-out
-             (new-plus e1 e2)
-             (new-simplify e2)))
-          :name 'new-plus-drop-left-zero)
+            (and (new-if-expr expr)
+                 (not (new-assumed-true (new-condition expr) env))
+                 (new-assumed-false (new-condition expr) env))
+            (new-if-simplify-out
+             expr
+             env
+             (new-simplify-if (new-else-branch expr) env)))
+          :name 'new-if-condition-known-false)
   (assert '(implies
-            (and (not (new-both-const e1 e2))
-                 (not (new-zero e1))
-                 (new-zero e2))
-            (new-simplify-out
-             (new-plus e1 e2)
-             (new-simplify e1)))
-          :name 'new-plus-drop-right-zero)
+            (and (new-if-expr expr)
+                 (not (new-assumed-true (new-condition expr) env))
+                 (not (new-assumed-false (new-condition expr) env))
+                 (new-same
+                  (new-simplify-if
+                   (new-then-branch expr)
+                   (new-extend-true (new-condition expr) env))
+                  (new-simplify-if
+                   (new-else-branch expr)
+                   (new-extend-false (new-condition expr) env))))
+            (new-if-simplify-out
+             expr
+             env
+             (new-simplify-if
+              (new-then-branch expr)
+              (new-extend-true (new-condition expr) env))))
+          :name 'new-if-redundant-branches)
   (assert '(implies
-            (and (not (new-both-const e1 e2))
-                 (not (new-zero e1))
-                 (not (new-zero e2)))
-            (new-simplify-out
-             (new-plus e1 e2)
-             (new-plus (new-simplify e1) (new-simplify e2))))
-          :name 'new-plus-rebuild)
-  (prove '(new-simplify-out (new-plus e1 e2) ?answer)
-         :answer '(values ?answer))
-  (new-synthesis-answer))
-
-(defun new-declare-graph-synthesis-language ()
-  (dolist (name '(state u v w))
-    (declare-constant name))
-  (dolist (entry '((new-distance 2)
-                   (new-plus 2)
-                   (new-update-distance 3)
-                   (new-update-predecessor 3)))
-    (apply #'declare-function entry))
-  (dolist (entry '((new-lt 2)
-                   (new-relax-out 5)))
-    (apply #'declare-relation entry)))
-
-(defun new-shortest-path-relaxation-program ()
-  ;; A Bellman-Ford/Dijkstra-style relaxation step in functional form.  If the
-  ;; candidate path through U improves V, return an updated state; otherwise
-  ;; return the original state.
-  (new-synthesis-setup)
-  (new-declare-graph-synthesis-language)
-  (assert '(implies
-            (new-lt (new-plus (new-distance u state) w)
-                    (new-distance v state))
-            (new-relax-out
-             state
-             u
-             v
-             w
-             (new-update-predecessor
-              (new-update-distance
-               state
-               v
-               (new-plus (new-distance u state) w))
-              v
-              u)))
-          :name 'new-relax-improves)
-  (assert '(implies
-            (not (new-lt (new-plus (new-distance u state) w)
-                         (new-distance v state)))
-            (new-relax-out state u v w state))
-          :name 'new-relax-keeps-state)
-  (prove '(new-relax-out state u v w ?answer)
+            (and (new-if-expr expr)
+                 (not (new-assumed-true (new-condition expr) env))
+                 (not (new-assumed-false (new-condition expr) env))
+                 (not
+                  (new-same
+                   (new-simplify-if
+                    (new-then-branch expr)
+                    (new-extend-true (new-condition expr) env))
+                   (new-simplify-if
+                    (new-else-branch expr)
+                    (new-extend-false (new-condition expr) env)))))
+            (new-if-simplify-out
+             expr
+             env
+             (new-if
+              (new-condition expr)
+              (new-simplify-if
+               (new-then-branch expr)
+               (new-extend-true (new-condition expr) env))
+              (new-simplify-if
+               (new-else-branch expr)
+               (new-extend-false (new-condition expr) env)))))
+          :name 'new-if-rebuild)
+  (prove '(new-if-simplify-out expr env ?answer)
          :answer '(values ?answer))
   (new-synthesis-answer))
 
@@ -190,10 +190,8 @@
          (new-stable-merge-program))
    (list 'stable-partition-program
          (new-stable-partition-program))
-   (list 'plus-simplifier-program
-         (new-plus-simplifier-program))
-   (list 'shortest-path-relaxation-program
-         (new-shortest-path-relaxation-program))))
+   (list 'if-normal-form-simplifier-program
+         (new-if-normal-form-simplifier-program))))
 
 ;;; Executable interpretations of the new symbolic examples.
 
@@ -226,61 +224,58 @@
                            (cons (first remaining) dropped))))))
     (partition* xs nil nil)))
 
-(defun new-run-const-p (expr)
-  (and (consp expr) (eq 'new-const (first expr))))
+(defun new-run-if-p (expr)
+  (and (consp expr) (eq 'new-if (first expr))))
 
-(defun new-run-plus-p (expr)
-  (and (consp expr) (eq 'new-plus (first expr))))
+(defun new-run-var-p (expr)
+  (and (consp expr) (eq 'new-var (first expr))))
 
-(defun new-run-zero-p (expr)
-  (equal expr '(new-const 0)))
+(defun new-run-if-condition (expr)
+  (second expr))
 
-(defun new-run-simplify (expr)
-  (if (new-run-plus-p expr)
-      (let ((left (new-run-simplify (second expr)))
-            (right (new-run-simplify (third expr))))
-        (cond
-         ((and (new-run-const-p left) (new-run-const-p right))
-          `(new-const ,(+ (second left) (second right))))
-         ((new-run-zero-p left)
-          right)
-         ((new-run-zero-p right)
-          left)
-         (t
-          `(new-plus ,left ,right))))
-      expr))
+(defun new-run-if-then-branch (expr)
+  (third expr))
 
-(defun new-run-lookup-distance (state node)
-  (let ((entry (assoc node (getf state :distances) :test #'equal)))
-    (if entry
-        (cdr entry)
-        (getf state :infinity most-positive-fixnum))))
+(defun new-run-if-else-branch (expr)
+  (fourth expr))
 
-(defun new-run-set-alist (alist key value)
-  (let ((seen nil))
-    (let ((updated
-            (mapcar (lambda (entry)
-                      (if (equal key (car entry))
-                          (progn
-                            (setf seen t)
-                            (cons key value))
-                          entry))
-                    alist)))
-      (if seen
-          updated
-          (acons key value updated)))))
-
-(defun new-run-relax-edge (state u v w)
-  (let* ((candidate (+ (new-run-lookup-distance state u) w))
-         (current (new-run-lookup-distance state v)))
-    (if (< candidate current)
-        (list :distances
-              (new-run-set-alist (getf state :distances) v candidate)
-              :predecessors
-              (new-run-set-alist (getf state :predecessors) v u)
-              :infinity
-              (getf state :infinity most-positive-fixnum))
-        state)))
+(defun new-run-if-simplify (expr &optional env)
+  (cond
+   ((eq expr 'new-true)
+    'new-true)
+   ((eq expr 'new-false)
+    'new-false)
+   ((new-run-var-p expr)
+    (let ((known (assoc expr env :test #'equal)))
+      (cond
+       ((null known)
+        expr)
+       ((cdr known)
+        'new-true)
+       (t
+        'new-false))))
+   ((new-run-if-p expr)
+    (let* ((condition (new-run-if-condition expr))
+           (known (assoc condition env :test #'equal)))
+      (cond
+       ((and known (cdr known))
+        (new-run-if-simplify (new-run-if-then-branch expr) env))
+       (known
+        (new-run-if-simplify (new-run-if-else-branch expr) env))
+       (t
+        (let* ((then-result
+                 (new-run-if-simplify
+                  (new-run-if-then-branch expr)
+                  (acons condition t env)))
+               (else-result
+                 (new-run-if-simplify
+                  (new-run-if-else-branch expr)
+                  (acons condition nil env))))
+          (if (equal then-result else-result)
+              then-result
+              `(new-if ,condition ,then-result ,else-result)))))))
+   (t
+    expr)))
 
 (defun new-run-stable-merge-demo ()
   (list :left '(1 3 5 7)
@@ -291,27 +286,25 @@
   (list :input '(1 2 3 4 5 6 7)
         :answer (new-run-stable-partition '(1 2 3 4 5 6 7) #'oddp)))
 
-(defun new-run-plus-simplifier-demo ()
-  (let ((expr '(new-plus
-                (new-plus (new-const 0) (new-const 4))
-                (new-plus (new-const 1) (new-const 2)))))
+(defun new-run-if-normal-form-simplifier-demo ()
+  (let ((expr '(new-if
+                (new-var x)
+                (new-if
+                 (new-var y)
+                 (new-if (new-var x) new-true new-false)
+                 (new-if (new-var z) (new-var y) (new-var y)))
+                (new-if
+                 (new-var y)
+                 (new-if (new-var x) new-false new-true)
+                 (new-if (new-var x) (new-var y) (new-var y))))))
     (list :input expr
-          :answer (new-run-simplify expr))))
-
-(defun new-run-shortest-path-relaxation-demo ()
-  (let ((state '(:distances ((a . 0) (b . 7))
-                 :predecessors nil
-                 :infinity 1000000)))
-    (list :edge '(a b 3)
-          :before state
-          :after (new-run-relax-edge state 'a 'b 3))))
+          :answer (new-run-if-simplify expr))))
 
 (defun new-executable-synthesis-demos ()
   (list
    (list 'stable-merge (new-run-stable-merge-demo))
    (list 'stable-partition (new-run-stable-partition-demo))
-   (list 'plus-simplifier (new-run-plus-simplifier-demo))
-   (list 'shortest-path-relaxation
-         (new-run-shortest-path-relaxation-demo))))
+   (list 'if-normal-form-simplifier
+         (new-run-if-normal-form-simplifier-demo))))
 
 ;;; new-synthesis-examples.lisp EOF
